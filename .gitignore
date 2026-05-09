@@ -5,6 +5,15 @@ dist/
 *.obj
 *.efi.unsigned
 tools/abl-patcher/abl-patcher
+tests/*/test_*
+!tests/*/test_*.c
+!tests/*/test_*.h
+!tests/*/test_*.sh
+
+# Session/tooling state
+.claude/
+.omc/
+tests/*/.omc/
 
 # Stock OTA partition images — never tracked
 images/
