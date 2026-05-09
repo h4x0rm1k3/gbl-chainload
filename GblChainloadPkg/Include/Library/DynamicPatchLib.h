@@ -22,4 +22,12 @@ DynamicPatch_Apply (
   OUT    PATCH_RESULT  *Result
   );
 
+/**
+  Populate gPatchTable / gPatchTableLen from the per-scope patch arrays.
+  Call once before DynamicPatch_Apply() in EDK-II builds.
+  Host tests skip this — they assign gPatchTable directly.
+**/
+VOID
+DynamicPatchLib_EnsureInit (VOID);
+
 #endif /* DYNAMIC_PATCH_LIB_H_ */

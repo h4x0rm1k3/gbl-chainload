@@ -1,0 +1,35 @@
+## @file DynamicPatchLib.inf
+#  Runtime patch-table aggregator and engine for GBL chainload.
+#  Assembles universal, OEM, and mode-specific patches into a single table
+#  and applies them to the in-memory ABL PE image.
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = DynamicPatchLib
+  FILE_GUID                      = 3967c143-4d98-4eba-80c6-5f95825b6ffd
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 0.1
+  LIBRARY_CLASS                  = DynamicPatchLib
+
+[Sources]
+  Internal/ScanLib.c
+  Internal/PeSections.c
+  Internal/Encode.c
+  Internal/PatchEngine.c
+  PatchTable.c
+  universal/universal.c
+  oem/oneplus_canoe.c
+  mode_1/mode_1.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  GblChainloadPkg/GblChainloadPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+
+[BuildOptions]
+  *_*_AARCH64_CC_FLAGS = -DGBL_MODE=$(GBL_MODE)
