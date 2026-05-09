@@ -122,6 +122,12 @@ CommonEarlyInit (
           "gbl-chainload | mode=%d auto=%d debug=%d verbose=%d\n",
           (int)GBL_MODE, (int)GBL_AUTO, (int)GBL_DEBUG, (int)GBL_VERBOSE));
 
+  DeviceInfoInit ();
+  EnumeratePartitions ();
+  UpdatePartitionEntries ();
+  SignalSDDetection ();
+  LoadDriversFromCurrentFv (ImageHandle);
+
   Status = LogFsInit ();
   if (Status == EFI_NOT_FOUND) {
     /* Always show fatal/recovery messages even with GBL_DEBUG=0. */
@@ -130,12 +136,6 @@ CommonEarlyInit (
     LogFsInstallDebugSink ();
     LogFsFlush ();
   }
-
-  DeviceInfoInit ();
-  EnumeratePartitions ();
-  UpdatePartitionEntries ();
-  SignalSDDetection ();
-  LoadDriversFromCurrentFv (ImageHandle);
 }
 
 STATIC VOID
