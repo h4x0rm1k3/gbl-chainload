@@ -73,4 +73,18 @@ ScanFor (
   OUT UINT32      *MatchOff
   );
 
+/** Same as ScanFor, but restricted to file-offsets that lie inside
+    an executable PE section.  Useful for code-only patch anchors.
+    When ExecOnly is FALSE, behaviour is identical to ScanFor. **/
+SCAN_RESULT
+ScanForBoundedSection (
+  IN  CONST UINT8 *Buf,
+  IN  UINT32       Size,
+  IN  BOOLEAN      ExecOnly,
+  IN  CONST UINT8 *Pattern,
+  IN  CONST UINT8 *Mask OPTIONAL,
+  IN  UINTN        PatternLen,
+  OUT UINT32      *MatchOff
+  );
+
 #endif /* SCANLIB_H_ */

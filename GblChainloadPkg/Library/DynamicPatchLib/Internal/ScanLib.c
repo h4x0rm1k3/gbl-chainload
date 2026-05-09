@@ -1,6 +1,7 @@
 /** @file ScanLib.c — pattern scanner.
     Always scans the whole buffer to detect ambiguity. **/
 #include "ScanLib.h"
+#include "PeSections.h"
 
 STATIC BOOLEAN
 MatchAt (
@@ -39,6 +40,43 @@ ScanFor (
   }
 
   for (i = 0; i + PatternLen <= Size; ++i) {
+    if (MatchAt (Buf + i, Pattern, Mask, PatternLen)) {
+      if (Found == 0) FirstOff = i;
+      ++Found;
+    }
+  }
+
+  if (Found == 0) return SCAN_NOT_FOUND;
+  if (Found > 1)  return SCAN_AMBIGUOUS;
+  *MatchOff = FirstOff;
+  return SCAN_FOUND;
+}
+
+SCAN_RESULT
+ScanForBoundedSection (
+  IN  CONST UINT8 *Buf,
+  IN  UINT32       Size,
+  IN  BOOLEAN      ExecOnly,
+  IN  CONST UINT8 *Pattern,
+  IN  CONST UINT8 *Mask OPTIONAL,
+  IN  UINTN        PatternLen,
+  OUT UINT32      *MatchOff
+  )
+{
+  UINT32 i;
+  UINT32 Found    = 0;
+  UINT32 FirstOff = 0;
+
+  if (Buf == NULL || Pattern == NULL || MatchOff == NULL ||
+      PatternLen == 0 || Size < PatternLen) {
+    return SCAN_BAD_INPUT;
+  }
+
+  for (i = 0; i + PatternLen <= Size; ++i) {
+    if (ExecOnly &&
+        !IsPeFileOffsetInExecutableSection (Buf, Size, i, (UINT32)PatternLen)) {
+      continue;
+    }
     if (MatchAt (Buf + i, Pattern, Mask, PatternLen)) {
       if (Found == 0) FirstOff = i;
       ++Found;
