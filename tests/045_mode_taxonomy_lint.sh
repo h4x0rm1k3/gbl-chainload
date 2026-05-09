@@ -55,4 +55,13 @@ grep -q 'UniversalPolicy_ShouldDropQseeOplusSec' \
   GblChainloadPkg/Library/ProtocolHookLib/QseecomHook.c \
   || { echo "FAIL: QseecomHook missing universal OplusSec drop"; exit 1; }
 
+# 9. ProtocolHook_InstallAll exists.
+grep -q 'ProtocolHook_InstallAll' \
+  GblChainloadPkg/Library/ProtocolHookLib/InstallAll.c \
+  || { echo "FAIL: InstallAll.c missing main entry"; exit 1; }
+test -f GblChainloadPkg/Library/ProtocolHookLib/ProtocolHookLib.inf \
+  || { echo "FAIL: missing ProtocolHookLib.inf"; exit 1; }
+test -f GblChainloadPkg/Include/Library/ProtocolHookLib.h \
+  || { echo "FAIL: missing public ProtocolHookLib.h"; exit 1; }
+
 echo "ok 045_mode_taxonomy_lint"

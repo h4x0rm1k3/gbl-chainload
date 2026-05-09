@@ -1,0 +1,38 @@
+## @file ProtocolHookLib.inf
+#  Universal + per-mode protocol hook dispatcher for GBL chainload.
+#  Installs slot wrappers for VerifiedBoot, SCM, Qseecom, and SPSS
+#  protocols and applies baseline + mode-specific policies.
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = ProtocolHookLib
+  FILE_GUID                      = 0cc769aa-2567-418c-bb2e-ce5316ee3e69
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 0.1
+  LIBRARY_CLASS                  = ProtocolHookLib
+
+[Sources]
+  InstallAll.c
+  UniversalBaseline.c
+  Mode1Overlay.c
+  VerifiedBootHook.c
+  QseecomHook.c
+  ScmHook.c
+  SpssHook.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  GblChainloadPkg/GblChainloadPkg.dec
+  QcomModulePkg/QcomModulePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  PrintLib
+  UefiBootServicesTableLib
+  UefiLib
+
+[BuildOptions]
+  *_*_AARCH64_CC_FLAGS = -DGBL_MODE=$(GBL_MODE)
