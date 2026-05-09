@@ -21,12 +21,12 @@
   internal traffic kicked off from our logging path can land on any
   slot via SCM/QSEECOM.
 
-  In FAKELOCKED builds, the device-state protocol slots mutate ABL's downstream
-  view only: READ_CONFIG and VBDeviceInit report locked/non-critical-locked,
-  while WRITE_CONFIG and VBDeviceResetState are swallowed with EFI_SUCCESS so
-  ABL cannot persist lock-state experiments back to RPMB. Other slots remain
-  pass-through so GREEN/KeyMaster state is produced by ABL's normal code from
-  the locked inputs.
+  In mode-1 (GBL_MODE == 1), the device-state protocol slots mutate ABL's
+  downstream view only: READ_CONFIG and VBDeviceInit report locked/non-critical-
+  locked via Mode1Policy_*, while WRITE_CONFIG and VBDeviceResetState are
+  swallowed by UniversalPolicy_* so ABL cannot persist lock-state experiments
+  back to RPMB. Other slots remain pass-through so GREEN/KeyMaster state is
+  produced by ABL's normal code from the locked inputs.
 **/
 
 #include <Uefi.h>
@@ -38,6 +38,7 @@
 #include <Library/UefiLib.h>
 #include <Protocol/EFIVerifiedBoot.h>
 #include "HookCommon.h"
+#include "Mode1Overlay.h"
 #include "UniversalBaseline.h"
 
 STATIC QCOM_VERIFIEDBOOT_PROTOCOL    *gHookedVb               = NULL;
@@ -80,86 +81,6 @@ VbDeviceStateOpName (
   }
 }
 
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-STATIC UINTN
-VbOffsetOfDeviceInfoIsUnlocked (VOID)
-{
-  return (UINTN)&(((DeviceInfo *)0)->is_unlocked);
-}
-
-STATIC UINTN
-VbOffsetOfDeviceInfoIsUnlockCritical (VOID)
-{
-  return (UINTN)&(((DeviceInfo *)0)->is_unlock_critical);
-}
-
-STATIC VOID
-VbForceDeviceInfoBufferLocked (
-  IN OUT UINT8       *Buf,
-  IN     UINT32       BufLen,
-  IN     CONST CHAR8  *Context,
-  IN     BOOLEAN       Log
-  )
-{
-  UINTN   IsUnlockedOff;
-  UINTN   IsUnlockCriticalOff;
-  BOOLEAN OldUnlocked;
-  BOOLEAN OldUnlockCritical;
-
-  if (Buf == NULL) {
-    return;
-  }
-
-  IsUnlockedOff       = VbOffsetOfDeviceInfoIsUnlocked ();
-  IsUnlockCriticalOff = VbOffsetOfDeviceInfoIsUnlockCritical ();
-  if ((UINTN)BufLen <= IsUnlockedOff ||
-      (UINTN)BufLen <= IsUnlockCriticalOff) {
-    if (Log) {
-      DEBUG ((DEBUG_WARN,
-              "vb-fakelock | %a | device-info buffer too small len=%u need>%u\n",
-              Context, BufLen, (UINT32)IsUnlockCriticalOff));
-    }
-    return;
-  }
-
-  OldUnlocked       = Buf[IsUnlockedOff] ? TRUE : FALSE;
-  OldUnlockCritical = Buf[IsUnlockCriticalOff] ? TRUE : FALSE;
-  Buf[IsUnlockedOff]       = 0;
-  Buf[IsUnlockCriticalOff] = 0;
-
-  if (Log) {
-    DEBUG ((DEBUG_INFO,
-            "vb-fakelock | %a | is_unlocked %u->0 | is_unlock_critical %u->0\n",
-            Context, (UINT32)OldUnlocked, (UINT32)OldUnlockCritical));
-  }
-}
-
-STATIC VOID
-VbForceDevinfoVbLocked (
-  IN OUT device_info_vb_t *Devinfo,
-  IN     CONST CHAR8      *Context,
-  IN     BOOLEAN           Log
-  )
-{
-  BOOLEAN OldUnlocked;
-  BOOLEAN OldUnlockCritical;
-
-  if (Devinfo == NULL) {
-    return;
-  }
-
-  OldUnlocked       = Devinfo->is_unlocked ? TRUE : FALSE;
-  OldUnlockCritical = Devinfo->is_unlock_critical ? TRUE : FALSE;
-  Devinfo->is_unlocked = FALSE;
-  Devinfo->is_unlock_critical = FALSE;
-
-  if (Log) {
-    DEBUG ((DEBUG_INFO,
-            "vb-fakelock | %a | devinfo_vb is_unlocked %u->0 | is_unlock_critical %u->0\n",
-            Context, (UINT32)OldUnlocked, (UINT32)OldUnlockCritical));
-  }
-}
-#endif
 
 /* Local hex helper — mirrors QseecomHook's HexN to keep this lib
  * self-contained until we factor out a shared utility header. */
@@ -208,14 +129,15 @@ HookedVBRwDeviceState (
     return EFI_NOT_READY;
   }
   if (!First) {
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-    /* Reentry guard suppresses recursive logging only; fakelock policy must
-     * still apply on every protocol invocation. */
-#else
     Status = gOrigVbRwDeviceState (This, Op, Buf, BufLen);
+#if (GBL_MODE == 1)
+    /* Fakelock policy enforced on reentry too — same as first-entry path. */
+    if (Op == READ_CONFIG) {
+      Mode1Policy_OnVbReadConfig_Post (Status, Buf, BufLen);
+    }
+#endif
     HookLeave (&gVbGuard);
     return Status;
-#endif
   }
 
   /* For WRITE_CONFIG the interesting bytes are the input — snapshot
@@ -230,9 +152,9 @@ HookedVBRwDeviceState (
 
   Status = gOrigVbRwDeviceState (This, Op, Buf, BufLen);
 
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-  if (!EFI_ERROR (Status) && Op == READ_CONFIG) {
-    VbForceDeviceInfoBufferLocked (Buf, BufLen, "READ_CONFIG", First);
+#if (GBL_MODE == 1)
+  if (Op == READ_CONFIG) {
+    Mode1Policy_OnVbReadConfig_Post (Status, Buf, BufLen);
   }
 #endif
 
@@ -266,23 +188,26 @@ HookedVBDeviceInit (
     return EFI_NOT_READY;
   }
   if (!First) {
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-    /* Still force locked inputs/outputs on recursive calls. */
-#else
+#if (GBL_MODE == 1)
+    /* Fakelock policy enforced on reentry too — same as first-entry path. */
+    Mode1Policy_OnVbDeviceInit_PrePost (Devinfo, /*IsPre=*/TRUE);
+#endif
     Status = gOrigVbDeviceInit (This, Devinfo);
+#if (GBL_MODE == 1)
+    Mode1Policy_OnVbDeviceInit_PrePost (Devinfo, /*IsPre=*/FALSE);
+#endif
     HookLeave (&gVbGuard);
     return Status;
-#endif
   }
 
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-  VbForceDevinfoVbLocked (Devinfo, "VBDeviceInit/pre", First);
+#if (GBL_MODE == 1)
+  Mode1Policy_OnVbDeviceInit_PrePost (Devinfo, /*IsPre=*/TRUE);
 #endif
 
   Status = gOrigVbDeviceInit (This, Devinfo);
 
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-  VbForceDevinfoVbLocked (Devinfo, "VBDeviceInit/post", First);
+#if (GBL_MODE == 1)
+  Mode1Policy_OnVbDeviceInit_PrePost (Devinfo, /*IsPre=*/FALSE);
 #endif
   Unlocked       = (Devinfo != NULL) ? (UINT32)Devinfo->is_unlocked        : 0xFF;
   UnlockCritical = (Devinfo != NULL) ? (UINT32)Devinfo->is_unlock_critical : 0xFF;
@@ -553,10 +478,10 @@ InstallVerifiedBootHook (VOID)
   EFI_STATUS                  Status;
   QCOM_VERIFIEDBOOT_PROTOCOL *Vb = NULL;
   UINTN                       Installed = 0;
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
+#if (GBL_MODE == 1)
   BOOLEAN                     HaveRwDeviceState = FALSE;
-  BOOLEAN                     HaveDeviceInit = FALSE;
-  BOOLEAN                     HaveResetState = FALSE;
+  BOOLEAN                     HaveDeviceInit    = FALSE;
+  BOOLEAN                     HaveResetState    = FALSE;
 #endif
 
   if (gHookedVb != NULL) {
@@ -576,7 +501,7 @@ InstallVerifiedBootHook (VOID)
     gOrigVbRwDeviceState = Vb->VBRwDeviceState;
     Vb->VBRwDeviceState  = HookedVBRwDeviceState;
     Installed++;
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
+#if (GBL_MODE == 1)
     HaveRwDeviceState = TRUE;
 #endif
   } else { Print (L"VerifiedBootHook: VBRwDeviceState NULL — skip\n"); }
@@ -585,7 +510,7 @@ InstallVerifiedBootHook (VOID)
     gOrigVbDeviceInit = Vb->VBDeviceInit;
     Vb->VBDeviceInit  = HookedVBDeviceInit;
     Installed++;
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
+#if (GBL_MODE == 1)
     HaveDeviceInit = TRUE;
 #endif
   } else { Print (L"VerifiedBootHook: VBDeviceInit NULL — skip\n"); }
@@ -612,7 +537,7 @@ InstallVerifiedBootHook (VOID)
     gOrigVbResetState        = Vb->VBDeviceResetState;
     Vb->VBDeviceResetState   = HookedVBResetState;
     Installed++;
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
+#if (GBL_MODE == 1)
     HaveResetState = TRUE;
 #endif
   } else { Print (L"VerifiedBootHook: VBDeviceResetState NULL — skip\n"); }
@@ -641,9 +566,9 @@ InstallVerifiedBootHook (VOID)
     Installed++;
   } else { Print (L"VerifiedBootHook: VBIsKeymasterEnabled NULL — skip\n"); }
 
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
+#if (GBL_MODE == 1)
   if (!HaveRwDeviceState || !HaveDeviceInit || !HaveResetState) {
-    Print (L"VerifiedBootHook: fakelocked required slots missing "
+    Print (L"VerifiedBootHook: mode-1 required slots missing "
            L"(rw=%u init=%u reset=%u)\n",
            (UINT32)HaveRwDeviceState, (UINT32)HaveDeviceInit,
            (UINT32)HaveResetState);
