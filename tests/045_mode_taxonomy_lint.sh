@@ -41,4 +41,18 @@ grep -q 'patch1-efisp-recursion' "$PKG/universal/universal.c" \
 grep -q 'patch7-orange-screen' "$PKG/oem/oneplus_canoe.c" \
   || { echo "FAIL: patch7 must be in oem/oneplus_canoe.c"; exit 1; }
 
+# 8. UniversalBaseline policies wired into slot wrappers.
+grep -q 'UniversalPolicy_OnVbWriteConfig' \
+  GblChainloadPkg/Library/ProtocolHookLib/VerifiedBootHook.c \
+  || { echo "FAIL: VerifiedBootHook missing UniversalPolicy_OnVbWriteConfig call"; exit 1; }
+grep -q 'UniversalPolicy_OnVbReset' \
+  GblChainloadPkg/Library/ProtocolHookLib/VerifiedBootHook.c \
+  || { echo "FAIL: VerifiedBootHook missing UniversalPolicy_OnVbReset call"; exit 1; }
+grep -q 'UniversalPolicy_ShouldDropScmSip' \
+  GblChainloadPkg/Library/ProtocolHookLib/ScmHook.c \
+  || { echo "FAIL: ScmHook missing universal SIP drop"; exit 1; }
+grep -q 'UniversalPolicy_ShouldDropQseeOplusSec' \
+  GblChainloadPkg/Library/ProtocolHookLib/QseecomHook.c \
+  || { echo "FAIL: QseecomHook missing universal OplusSec drop"; exit 1; }
+
 echo "ok 045_mode_taxonomy_lint"

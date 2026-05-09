@@ -31,6 +31,7 @@
 #include <Library/UefiLib.h>
 #include <Protocol/EFIScm.h>
 #include "HookCommon.h"
+#include "UniversalBaseline.h"
 
 STATIC QCOM_SCM_PROTOCOL     *gHookedScm          = NULL;
 STATIC QCOM_SCM_SYS_CALL      gOrigScmSysCall     = NULL;
@@ -272,7 +273,7 @@ DecodeMinkIpcInvoke (
  * -------------------------------------------------------------------- */
 
 #define SCM_SIP_TZ_INFO_GET_SECURE_STATE    0x02000604u
-#define SCM_SIP_TZ_BLOW_SW_FUSE_ID         0x02000801u  /* DROP CANDIDATE */
+#define SCM_SIP_TZ_BLOW_SW_FUSE_ID         0x02000801u  /* dropped universally — see UniversalBaseline.c */
 #define SCM_SIP_TZ_IS_SW_FUSE_BLOWN_ID     0x02000804u
 #define SCM_SIP_TZ_INFO_GET_FEATURE_VER    0x02000603u
 #define SCM_SIP_TZ_UPDATE_ROLLBACK_VER     0x0200011Eu  /* DROP CANDIDATE */
@@ -332,12 +333,12 @@ DecodeSipSmcId (
 
     case SCM_SIP_TZ_BLOW_SW_FUSE_ID:
       /* P[0]=FuseId (0=TZ_HLOS_IMG_TAMPER, 23=TZ_HLOS_TAMPER_NOTIFY).
-       * DROP CANDIDATE — gbl_root drops this; gbl-chainload logs only.
-       * Port KM_BLOCK_TAMPER_FUSE drop policy from gbl_root scm_hook.h
-       * to close the fuse-blow gap (Phase B item). */
+       * This SMC is dropped by UniversalPolicy_ShouldDropScmSip before
+       * reaching this decoder — this case is retained for completeness
+       * but will not fire for the dropped SIP. */
       DEBUG ((DEBUG_INFO,
               "scm-sip | smcid=0x%08x(TZ_BLOW_SW_FUSE_ID)"
-              " | fuse_id=0x%llx | LOG-ONLY(NOT-DROPPED) | st=%r\n",
+              " | fuse_id=0x%llx | st=%r\n",
               SmcId, P0, Status));
       return TRUE;
 
@@ -477,6 +478,15 @@ HookedScmSipSysCall (
     Status = gOrigScmSipSysCall (This, SmcId, ParamId, Parameters, Results);
     HookLeave (&gScmGuard);
     return Status;
+  }
+
+  /* Universal policy: drop certain SIPs before forwarding to TZ. */
+  {
+    EFI_STATUS FakeStatus;
+    if (UniversalPolicy_ShouldDropScmSip (SmcId, &FakeStatus)) {
+      HookLeave (&gScmGuard);
+      return FakeStatus;
+    }
   }
 
   Status = gOrigScmSipSysCall (This, SmcId, ParamId, Parameters, Results);

@@ -38,6 +38,7 @@
 #include <Library/UefiLib.h>
 #include <Protocol/EFIVerifiedBoot.h>
 #include "HookCommon.h"
+#include "UniversalBaseline.h"
 
 STATIC QCOM_VERIFIEDBOOT_PROTOCOL    *gHookedVb               = NULL;
 STATIC QCOM_VB_RW_DEVICE_STATE        gOrigVbRwDeviceState    = NULL;
@@ -221,17 +222,10 @@ HookedVBRwDeviceState (
    * before the call lest the original mutate or zero them. For
    * READ_CONFIG the post-call buffer is what we want. */
   if (Op == WRITE_CONFIG) {
-    VbHex16 ((CONST UINT8 *)Buf, (UINTN)BufLen, Hex, sizeof (Hex));
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-    Status = EFI_SUCCESS;
-    if (First) {
-      DEBUG ((DEBUG_INFO,
-              "vb-rwstate | op=%a | bufLen=%u | first16=%a | st=%r | fakelock=WRITE swallowed\n",
-              VbDeviceStateOpName ((UINT32)Op), BufLen, Hex, Status));
-    }
+    /* Universal policy: swallow WRITE_CONFIG without forwarding. */
+    Status = UniversalPolicy_OnVbWriteConfig ((UINT32)Op, Buf, BufLen);
     HookLeave (&gVbGuard);
     return Status;
-#endif
   }
 
   Status = gOrigVbRwDeviceState (This, Op, Buf, BufLen);
@@ -415,28 +409,15 @@ HookedVBResetState (
     return EFI_NOT_READY;
   }
   if (!First) {
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-    /* Reset/write suppression is policy, not just logging. */
-#else
-    Status = gOrigVbResetState (This);
+    /* Universal policy: swallow reset on reentry too — suppression is
+     * policy, not just logging. */
+    Status = UniversalPolicy_OnVbReset ();
     HookLeave (&gVbGuard);
     return Status;
-#endif
   }
 
-#if defined (FAKELOCKED) || defined (FAKELOCKED_DEBUG)
-  Status = EFI_SUCCESS;
-  if (First) {
-    DEBUG ((DEBUG_INFO, "vb-reset | st=%r | fakelock=reset swallowed\n",
-            Status));
-  }
-  HookLeave (&gVbGuard);
-  return Status;
-#endif
-
-  Status = gOrigVbResetState (This);
-  DEBUG ((DEBUG_INFO, "vb-reset | st=%r\n", Status));
-
+  /* Universal policy: swallow VBDeviceResetState without forwarding. */
+  Status = UniversalPolicy_OnVbReset ();
   HookLeave (&gVbGuard);
   return Status;
 }

@@ -23,6 +23,7 @@
 #include <Library/UefiLib.h>
 #include <Protocol/EFIQseecom.h>
 #include "HookCommon.h"
+#include "UniversalBaseline.h"
 
 STATIC QCOM_QSEECOM_SEND_CMD_APP gOriginalSendCmd  = NULL;
 STATIC QCOM_QSEECOM_START_APP    gOriginalStartApp = NULL;
@@ -496,6 +497,15 @@ HookedSendCmd (
 
   if (SendBuf != NULL && SendLen >= sizeof (UINT32)) {
     CopyMem (&CmdId, SendBuf, sizeof (CmdId));
+  }
+
+  /* Universal policy: drop certain OplusSec commands before forwarding. */
+  if (Handle == gOplusSecHandle && Handle != (UINT32)-1) {
+    EFI_STATUS FakeStatus;
+    if (UniversalPolicy_ShouldDropQseeOplusSec (CmdId, &FakeStatus)) {
+      HookLeave (&gQseecomSendGuard);
+      return FakeStatus;
+    }
   }
 
   Status = gOriginalSendCmd (This, Handle, SendBuf, SendLen, RspBuf, RspLen);
