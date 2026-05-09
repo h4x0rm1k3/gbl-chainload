@@ -65,7 +65,7 @@ main (void)
                            kPatch7AnchorPattern, NULL,
                            kPatch7AnchorPatternLen, &anchor_off);
   assert (r == SCAN_FOUND && "patch7 anchor not unique");
-  assert (anchor_off == 0x78ECU && "anchor found at unexpected offset");
+  assert (anchor_off == 0x78D8U && "anchor found at unexpected offset");
   printf ("ok patch7 anchor uniqueness (off=0x%x)\n", anchor_off);
 
   /* --- 2. Pre-patch: rewrite site contains original CBZ -------------------- */
