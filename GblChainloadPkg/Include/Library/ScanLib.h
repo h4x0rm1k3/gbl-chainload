@@ -51,6 +51,9 @@ typedef int      BOOLEAN;
 #ifndef FALSE
 #define FALSE 0
 #endif
+#ifndef CHAR8
+typedef char CHAR8;
+#endif
 #endif /* __HOST_BUILD__ */
 
 typedef enum {

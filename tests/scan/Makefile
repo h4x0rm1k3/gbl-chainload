@@ -2,7 +2,7 @@ CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -Wno-unused-parameter -std=c11 -D__HOST_BUILD__
 PROJ    := $(realpath ../..)
 
-TESTS   := test_scanfor test_scan_bounded test_encode
+TESTS   := test_scanfor test_scan_bounded test_encode test_engine
 
 all: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
@@ -21,6 +21,12 @@ test_encode: test_encode.c \
              $(PROJ)/GblChainloadPkg/Library/DynamicPatchLib/Internal/Encode.c
 	$(CC) $(CFLAGS) -D__HOST_BUILD__ \
 	    -I$(PROJ)/GblChainloadPkg/Library/DynamicPatchLib/Internal $^ -o $@
+
+test_engine: test_engine.c \
+             $(PROJ)/GblChainloadPkg/Library/DynamicPatchLib/Internal/PatchEngine.c
+	$(CC) $(CFLAGS) -D__HOST_BUILD__ \
+	    -I$(PROJ)/GblChainloadPkg/Library/DynamicPatchLib/Internal \
+	    -I$(PROJ)/GblChainloadPkg/Include/Library $^ -o $@
 
 clean:
 	rm -f $(TESTS) *.o
