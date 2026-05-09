@@ -1,0 +1,35 @@
+## @file LogFsLib.inf
+#  Mount the logfs partition, rotate UefiLog history, open a clean post-GBL
+#  log file. Step 2 of bring-up; later steps add the DEBUG sink.
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = LogFsLib
+  FILE_GUID                      = 7a4f1c2e-2b3d-4e5f-9a8b-c6d7e8f9a0b1
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 0.1
+  LIBRARY_CLASS                  = LogFsLib
+
+[Sources]
+  Mount.c
+  Rotation.c
+  PostGblLog.c
+  DebugSink.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  QcomModulePkg/QcomModulePkg.dec
+  GblChainloadPkg/GblChainloadPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  PrintLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  BootLib
+
+[Protocols]
+  gEfiSimpleFileSystemProtocolGuid
