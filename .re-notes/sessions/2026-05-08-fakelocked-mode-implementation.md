@@ -484,3 +484,41 @@ Key findings:
 - Extracted cached blob artifacts under `build/avb-cache/eu-16.0.5.703/` for boot/recovery/dtbo footers and embedded vbmeta.
 
 Conclusion: the `androidboot.vbmeta.<partition>.digest` bootconfig fields are best treated as Qualcomm/AVB dynamic outputs derived from loaded AVB descriptors/partition data. Oplus-specific handling is separate (`oplusboot.*`). This supports the input-façade approach rather than output rewriting.
+
+## 2026-05-10 — logfs mount root cause closed
+
+Investigation complete. Root cause was **two layered bugs in v2 Entry.c**, not a dropped edk2 commit.
+
+### Specific commits responsible
+
+| Commit | Root cause addressed |
+|--------|---------------------|
+| `aac521e` | `LogFsInit()` was called before `EnumeratePartitions()` in `CommonEarlyInit`. `GetBlkIOHandles("logfs")` returned 0 handles because the partition table wasn't populated yet. Fix: moved `LogFsInit` to end of `CommonEarlyInit`, after `EnumeratePartitions` + `LoadDriversFromCurrentFv`. |
+| `7ad0d3f` | `MountLogFsRoot` called `ConnectController` before probing `HandleProtocol(SimpleFileSystem)`, and hard-failed on `EFI_NOT_FOUND`. On the staged path (`oem boot-efi`), BDS has already bound FAT to all partition handles before our EFI runs. `ConnectController` returns `EFI_NOT_FOUND` (no new binding needed), but `SimpleFileSystem` IS present. Fix: probe `HandleProtocol(SimpleFileSystem)` first; skip or tolerate `ConnectController`; step [3/5] is the authoritative gate. |
+
+### Dropped edk2 commit analysis
+
+Three commits were dropped between dirty and v2 edk2:
+- `676e4887a7` FastbootLib: add staged EFI helpers — only `mGblFreshStageAvailable`/`mGblStagedEfiHandle` state; no FS binding
+- `4c164c0249` FastbootLib: oem get-staged logfs (FAT mount) — adds a fastboot command; runs after LogFsInit; irrelevant
+- `89fc9fced8` FastbootLib: oem get-staged logfs (raw block IO) — replaces above with block-IO; no FS binding
+
+**None of the dropped commits touch FAT driver binding or ConnectController policy.** The edk2 patches were not the differentiator.
+
+### Why dirty mode-fakelocked.efi worked
+
+The platform BDS pre-connects FAT to all FAT-formatted partition handles (including `logfs`) before handing off to any boot option. Dirty's `MountLogFsRoot` (also called from dirty LinuxLoader via `MountLogFsForUefiLog`, which is a stub in dirty) relied on this: `ConnectController` returned `EFI_ALREADY_STARTED` (FAT already bound), then `HandleProtocol(SimpleFileSystem)` succeeded. This was accidental — not an intentional FAT-loading step.
+
+### Disposition of commit `7ad0d3f`
+
+**Keep — this is the correct proper fix.** `ConnectController` return code is advisory; `HandleProtocol(SimpleFileSystem)` is the authoritative check per UEFI spec. The probe-first logic handles both the staged path (BDS pre-connected FAT) and the flashed-EFISP path (ConnectController binds FAT on first call).
+
+### Build and test results
+
+- `dist/mode-0-auto-debug-verbose.efi`: 540,672 bytes, built successfully
+- `dist/mode-1-auto-debug-verbose.efi`: 561,152 bytes, built successfully
+- `./tests/runall.sh`: ALL TESTS PASS (sequential run, no parallel-build race)
+
+### Full root cause document
+
+`docs/re/logfs-mount-root-cause.md` — archived in repo.
