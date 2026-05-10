@@ -138,7 +138,7 @@
   # Workarounds for this Qualcomm edk2 fork against modern Ubuntu GCC:
   #  - __FORTIFY_SOURCE: BaseLib.h:148 macro space-bug workaround
   #  - -fno-stack-protector: Ubuntu gcc default-on stack-protector breaks -nostdlib
-  GCC:*_*_AARCH64_CC_FLAGS = -D__FORTIFY_SOURCE -fno-stack-protector -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-error=unused-function -Wno-error=array-parameter
+  GCC:*_*_AARCH64_CC_FLAGS = -D__FORTIFY_SOURCE -fno-stack-protector -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-error=unused-function -Wno-error=array-parameter -DGBL_EXPERIMENTAL_FASTBOOT_CMDS=1
 
   !if $(VERIFIED_BOOT_LE)
       GCC:*_*_*_CC_FLAGS = -DVERIFIED_BOOT_LE
