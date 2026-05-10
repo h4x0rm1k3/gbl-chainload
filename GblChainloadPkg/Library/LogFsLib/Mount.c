@@ -108,19 +108,46 @@ MountLogFsRoot (
   }
   Print (L"LogFs: [1/5] handle=%p OK\n", Handle);
 
-  Print (L"LogFs: [2/5] calling gBS->ConnectController\n");
-  Status = gBS->ConnectController (Handle, NULL, NULL, TRUE);
-  Print (L"LogFs: [2/5] ConnectController returned %r\n", Status);
-  if (EFI_ERROR (Status) && Status != EFI_ALREADY_STARTED) {
-    Print (L"LogFs: [2/5] FAIL — ConnectController failed (not EFI_ALREADY_STARTED)\n");
-    return Status;
-  }
-
-  Print (L"LogFs: [3/5] calling gBS->HandleProtocol (SimpleFileSystem)\n");
+  /* [2/5] Try HandleProtocol(SimpleFileSystem) directly first.
+   * On canoe the platform BDS may have already connected FAT to the logfs
+   * partition before we run.  If SimpleFileSystem is present we can skip
+   * ConnectController entirely; if not, attempt ConnectController and then
+   * re-probe.  EFI_NOT_FOUND from ConnectController means no driver bound
+   * this time, but the protocol may still appear if the platform's FAT
+   * driver is already managing the handle under a different context. */
+  Print (L"LogFs: [2/5] probe SimpleFileSystem before ConnectController\n");
   Status = gBS->HandleProtocol (Handle,
                                 &gEfiSimpleFileSystemProtocolGuid,
                                 (VOID **)&Fs);
-  Print (L"LogFs: [3/5] HandleProtocol(SimpleFS) returned %r\n", Status);
+  Print (L"LogFs: [2/5] direct HandleProtocol(SimpleFS) returned %r\n", Status);
+  if (EFI_ERROR (Status)) {
+    /* Not yet connected — attempt ConnectController to trigger driver binding. */
+    Print (L"LogFs: [2/5] calling gBS->ConnectController\n");
+    Status = gBS->ConnectController (Handle, NULL, NULL, TRUE);
+    Print (L"LogFs: [2/5] ConnectController returned %r\n", Status);
+    /* EFI_NOT_FOUND = no driver bound right now but may still be available
+     * via a pre-existing connection; EFI_ALREADY_STARTED = already bound.
+     * Either way, proceed to the HandleProtocol probe below. */
+    if (EFI_ERROR (Status) &&
+        Status != EFI_ALREADY_STARTED &&
+        Status != EFI_NOT_FOUND) {
+      Print (L"LogFs: [2/5] FAIL — ConnectController unexpected error\n");
+      return Status;
+    }
+    Print (L"LogFs: [2/5] ConnectController done (%r), re-probing SimpleFS\n", Status);
+    Fs = NULL;
+  }
+
+  Print (L"LogFs: [3/5] calling gBS->HandleProtocol (SimpleFileSystem)\n");
+  if (Fs == NULL) {
+    Status = gBS->HandleProtocol (Handle,
+                                  &gEfiSimpleFileSystemProtocolGuid,
+                                  (VOID **)&Fs);
+    Print (L"LogFs: [3/5] HandleProtocol(SimpleFS) returned %r\n", Status);
+  } else {
+    Print (L"LogFs: [3/5] SimpleFS already obtained in [2/5] probe\n");
+    Status = EFI_SUCCESS;
+  }
   if (EFI_ERROR (Status)) {
     Print (L"LogFs: [3/5] FAIL — SimpleFileSystem protocol unavailable\n");
     return Status;
