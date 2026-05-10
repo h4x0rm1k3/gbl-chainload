@@ -266,6 +266,12 @@ else
   fi
 fi
 
+# Phoenix stopwatch — start after step 2 succeeds (all three branches above
+# converge here). The OnePlus Phoenix watchdog drops the device to stock
+# fastboot 60s after fastboot mode is entered. We warn at 45s and abort at 55s.
+device_monitor_phoenix_start
+echo "    Phoenix stopwatch started — must reach bootloader within ${_PHOENIX_KILL}s"
+
 # Step 3 — wait for adb --------------------------------------------------
 # mode-debug's BootFlowChainLoad → patched ABL. For --escape-recovery, the
 # `fastboot reboot recovery` reason is preserved until `oem escape` starts ABL.
@@ -280,6 +286,11 @@ echo ">>> [3/5] waiting for adb (Linux or recovery)..."
 # authorization. Recovery boot can take 4-5 minutes on this device. If a
 # regression reboots/powers back into sibling FastbootLib instead, detect and
 # log that state immediately instead of waiting for manual interpretation.
+if ! device_monitor_phoenix_check; then
+  echo "error: Phoenix watchdog deadline reached — bailing to avoid stock-fastboot wedge" >&2
+  echo "       power off the device, power on into bootloader, rerun script." >&2
+  exit 1
+fi
 set +e
 WAIT_RESULT="$(wait_for_adb_or_fastboot_fallback 360)"
 WAIT_RC=$?
@@ -314,6 +325,11 @@ adb shell 'getprop ro.bootloader; getprop ro.bootmode; \
 # Step 4 — pull logs -----------------------------------------------------
 echo
 echo ">>> [4/5] capturing logs into $LOG_DIR"
+if ! device_monitor_phoenix_check; then
+  echo "error: Phoenix watchdog deadline reached — bailing to avoid stock-fastboot wedge" >&2
+  echo "       power off the device, power on into bootloader, rerun script." >&2
+  exit 1
+fi
 
 adb pull /proc/bootloader_log "$LOG_DIR/bootloader_log" 2>/dev/null \
   || echo "    /proc/bootloader_log not present — skipping"
@@ -347,6 +363,11 @@ if [[ "$RETURN_TO_FASTBOOT" == "0" ]]; then
 fi
 
 echo ">>> [5/5] rebooting back to sibling's fastboot for next iteration"
+if ! device_monitor_phoenix_check; then
+  echo "error: Phoenix watchdog deadline reached — bailing to avoid stock-fastboot wedge" >&2
+  echo "       power off the device, power on into bootloader, rerun script." >&2
+  exit 1
+fi
 # `adb reboot bootloader` → allows us to escape watchdog. we can escape
 adb reboot bootloader 2>/dev/null || true
 echo "    waiting for sibling's fastboot to come back up..."
@@ -354,6 +375,7 @@ echo "    waiting for sibling's fastboot to come back up..."
 # `fastboot devices` instead. Sibling boots fast (~5s) but allow up to 90s.
 if device_monitor_wait_for_fastboot 90; then
   echo "    sibling fastboot is back."
+  device_monitor_phoenix_stop
 else
   echo "    fastboot didn't come back within 90s — device may need manual recovery" >&2
 fi
