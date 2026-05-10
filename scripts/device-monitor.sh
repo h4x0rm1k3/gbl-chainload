@@ -168,3 +168,36 @@ device_monitor_phoenix_check () {
 device_monitor_phoenix_stop () {
   _PHOENIX_T0=""
 }
+
+# Quick state probes — return 0 if device is in the named state within 3s.
+
+# Is the device responding in fastboot right now?
+device_monitor_in_fastboot_quick () {
+  local out
+  out="$(timeout 3 fastboot devices 2>/dev/null | grep -c 'fastboot')"
+  [[ "$out" -ge 1 ]]
+}
+
+# Is adb up with a normal device state right now?
+device_monitor_in_adb_quick () {
+  local out
+  out="$(timeout 3 adb get-state 2>/dev/null)"
+  [[ -n "$out" && "$out" != "unknown" ]]
+}
+
+# Did the device drop to stock fastboot? Detects by product string mismatch.
+# Stock OnePlus fastboot returns a specific product (e.g. "infiniti" or
+# "canoe"); our patched FastbootLib returns a different one. Caller
+# specifies the expected product substring; mismatch => stock.
+device_monitor_dropped_to_stock () {
+  local expected="$1"
+  local product
+  product="$(timeout 3 fastboot getvar product 2>&1 | grep -i product | head -1 || true)"
+  if [[ -z "$product" ]]; then
+    return 1  # can't tell
+  fi
+  if echo "$product" | grep -qi "$expected"; then
+    return 1  # matched expected, not stock
+  fi
+  return 0  # mismatch = dropped to stock
+}
