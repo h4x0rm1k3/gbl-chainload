@@ -34,15 +34,24 @@ Both gated behind build flags (default ON for mode-1+, OFF for mode-0 to keep th
 
 ### Why hash-descriptor partitions are out of scope
 
-The user's working setup (stock recovery + LKM-patched init_boot → system boots) works because their `vbmeta.img` was re-flashed (by their Magisk/KSUN-style installer) with the `--disable-verification` flag set in the AVB image flags. AOSP's userspace AVB honors that flag and tolerates hash-descriptor mismatches. Mode-1 + patch9 v2 ensures ABL's libavb passes through to populated SlotData; ABL's cmdline emits green/locked. Userspace then sees `disable-verification` and accepts the on-disk content despite the hash mismatch.
+The user's `vbmeta.img` is bytewise stock — no flag manipulation, no Magisk/KSUN-style re-flash. The empirical observation is: stock recovery + LKM-patched init_boot → system boots cleanly under mode-1 + patch9 v2. Custom recovery + LKM-patched init_boot → boots into recovery, can't reach system.
 
-**None of this is gbl-chainload's doing.** It's the user's pre-existing vbmeta flag setup. We don't ship vbmeta.img modification tooling and we don't need to.
+The mechanism by which init_boot's hash-descriptor mismatch is tolerated by AOSP's userspace AVB while running mode-1 (locked/green emitted by ABL) is **not fully characterized in this spec**. The earlier `docs/re/aosp-early-avb-bootflow.md` investigation has partial findings, and the picture isn't yet complete (e.g., we don't fully understand which control path lets the hash mismatch be non-fatal when the device-state cmdline says `locked`).
 
-### Why recovery's chain validation isn't covered by `disable-verification`
+What matters for this spec: it works empirically, and we don't address hash-descriptor partitions (init_boot, vendor_boot, boot). Their handling is independent of the chain-partition-descriptor blocker we're fixing here. If the userspace tolerance mechanism breaks in a future Android version, this spec's work is unaffected — we'd address the new failure mode separately.
 
-The `disable-verification` flag skips dm-verity setup and tolerates hash-descriptor mismatches in the cmdline-state path. It does NOT bypass `chain_partition_descriptor` signature verification. Chain validation requires the chained partition's embedded vbmeta header to be signed by a key that matches the descriptor's stored public key (or hash). With custom recovery, the embedded vbmeta header is missing or signed with the wrong key → chain check fails regardless of vbmeta flags.
+### Why recovery's chain validation specifically blocks system boot
+
+`chain_partition_descriptor` validation reads the chained partition's embedded vbmeta header and verifies its signature against the descriptor's stored public key. This is a different code path from `hash_descriptor` content verification. Whatever AOSP-side mechanism tolerates LKM-style hash-descriptor mismatches, it does not — empirically — tolerate chain-descriptor signature failures. Custom recovery's missing/wrong-signed embedded vbmeta header → signature fails → init falls into recovery mode (per `docs/re/aosp-early-avb-bootflow.md`).
 
 That's the specific hole this spec fills.
+
+### Cmdline tidbit (per-partition digest vs main vbmeta digest)
+
+Worth distinguishing for future work:
+- `androidboot.vbmeta.digest` — main vbmeta.img's SHA over its bytes. Used by **Play Integrity / SafetyNet** for attestation. Spoofing matters for attestation success (mode-2 territory, separate plan).
+- `androidboot.vbmeta.<partition>.digest` (per-partition: `boot`, `init_boot`, etc.) — informational/telemetry. Not directly gated by Play Integrity in normal boot paths.
+- `androidboot.vbmeta.recovery.digest` specifically — only built and emitted when ABL boots into recovery mode (`oplusboot.mode=recovery`). In normal-boot path, this cmdline token isn't written at all. So custom recovery's "wrong" digest is not the discriminator that breaks normal boot — the chain-validation signature failure earlier in libavb's walk is.
 
 ## Section 2 — Plan 3a tooling (three tracks)
 
@@ -349,13 +358,22 @@ Estimated mode-1.efi after this work: ~580-590K. Mode-0 unchanged.
 ### Size monitoring
 
 To stay under control:
-- Document EFISP partition size in the spec once known. Runbook for the user: `fastboot reboot bootloader; fastboot getvar partition-size:efisp; fastboot getvar partition-size:efisp_a; fastboot getvar partition-size:efisp_b`.
+- Document EFISP partition size in the spec once known. Runbook for the user: `fastboot reboot bootloader; fastboot getvar partition-size:efisp; fastboot getvar partition-size:efisp_a; fastboot getvar partition-size:efisp_b`. (Sniff prior dirty-repo `fastboot getvar all` captures first; if absent, run on a stock-bootloader boot.)
 - Compare against gbl_root_canoe's 208K baseline. We're carrying more (LogFsLib, ProtocolHookLib, FastbootLib customizations) but should profile breakdown during implementation.
 - If post-Plan-3a/3d size exceeds (say) 600K, profile via `objdump -h` and trim:
   - Drop unused fastboot commands cherry-picked but never invoked.
   - Lazy-init AvbParseLib only when graft/status fastboot command is invoked (saves DXE-init cost).
   - Strip debug strings if size is critical.
 - Add a `tests/060_size_budget_lint.sh` that warns if any artifact in `dist/` exceeds 600K. Hard fail at 700K.
+
+### Dead-code elimination — what's already happening, what to verify
+
+ABL's FastbootLib has many `#ifdef`-gated oem command handlers (the recovery-escape-controls cherry-pick, ESP-load options, `oem boot-efi`, etc.). Two layers of size optimization apply:
+
+1. **Preprocessor `#ifdef` exclusion**: when a feature flag is undefined, the gated source is excluded at the preprocessor stage — the compiler never sees those bytes. We're already getting this for free for any disabled cherry-picks.
+2. **Linker DCE (`-gc-sections`)**: when functions are compiled but never referenced (e.g., a handler in the table but the table entry is conditional), the linker can strip them. Requires `-ffunction-sections -fdata-sections` at compile + `--gc-sections` at link. EDK-II RELEASE builds with the CLANG/GCC toolchains typically have these flags enabled in the `tools_def.txt`, but **we should verify in our DSC's `[BuildOptions]` and the resulting `.map` files** during Plan 3 implementation. If `--gc-sections` isn't on, enabling it likely shaves significant bytes from the cherry-picked FastbootLib code we don't actually invoke.
+
+Action item for plan-writing phase: verify our build's link-time flags include `--gc-sections`; if not, add and measure the size delta. This isn't a spec gate but a likely cheap win.
 
 ## Section 6 — Conclusion: why grafting just the vbmeta footer satisfies AOSP
 
