@@ -64,6 +64,22 @@ BootFlowChainLoad (VOID)
   HOOK_INSTALL_RESULT  HookRes = {0};
 #endif
 
+  /* logfs was closed by EnterFastboot. Re-open here so BootFlow's per-step
+     output (patch outcomes, hook install, transition) is persisted to logfs
+     even if the chainload red-states before the kernel boots and populates
+     /proc/bootloader_log. */
+  {
+    EFI_STATUS  LogStatus = LogFsInit ();
+    if (!EFI_ERROR (LogStatus)) {
+      LogFsInstallDebugSink ();
+      LogFsFlush ();
+      Print (L"BootFlow: logfs re-opened for chainload session\n");
+    } else {
+      Print (L"BootFlow: logfs re-open failed (%r) - continuing without logfs\n",
+             LogStatus);
+    }
+  }
+
   DEBUG ((DEBUG_INFO, "BootFlow: start (mode=%d)\n", (int)GBL_MODE));
   SCR_PRINT (L"BootFlow: start (mode=%d)\n", (int)GBL_MODE);
 
@@ -88,6 +104,7 @@ BootFlowChainLoad (VOID)
     }
   }
   DEBUG ((DEBUG_INFO, "BootFlow: ABL loaded — %u bytes\n", PeSize));
+  LogFsFlush ();
 
   /* 2. Initialize patch table aggregator + apply patches. */
   DynamicPatchLib_EnsureInit ();
@@ -100,6 +117,8 @@ BootFlowChainLoad (VOID)
   SCR_PRINT (L"BootFlow: patches applied=%u missed=%u worst=%d\n",
              PatchRes.AppliedCount, PatchRes.MissedCount,
              (int)PatchRes.WorstOutcome);
+
+  LogFsFlush ();
 
   if (PatchRes.WorstOutcome == PATCH_RESULT_MANDATORY_MISS) {
     DEBUG ((DEBUG_ERROR, "BootFlow: mandatory patch missed - aborting\n"));
@@ -119,6 +138,7 @@ BootFlowChainLoad (VOID)
     FreePool (Pe);
     return Status;
   }
+  LogFsFlush ();
 #else
   DEBUG ((DEBUG_INFO, "BootFlow: mode-0 — skipping ProtocolHook_InstallAll\n"));
   SCR_PRINT (L"BootFlow: mode-0 -- skipping ProtocolHook_InstallAll\n");
