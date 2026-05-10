@@ -558,3 +558,288 @@ Checked against `docs/superpowers/specs/2026-05-10-test-device-hardening-design.
 No placeholders, no `Similar to Task N`, every code block contains the actual code to write or the actual command to run. Type consistency: `_PHOENIX_T0`, `_PHOENIX_WARN`, `_PHOENIX_KILL` are used uniformly across Task 3 (definitions) and Task 4 (consumers). `device_monitor_in_fastboot_quick`, `device_monitor_in_adb_quick`, `device_monitor_dropped_to_stock`, `device_monitor_phoenix_check` names are uniform across Tasks 3, 5, 6.
 
 One gap acknowledged: the spec says "if baseline run is clean, plan reduces to sub-task 3 + 4". This plan still runs Tasks 5+6 in that case — they're worth landing regardless since they add defence in depth (state probes and clearer error messages don't hurt a working script). If the operator strongly wants to skip them after a clean Task 2, they can; mark Tasks 5–6 done without changes.
+
+---
+
+## Scope amendment — 2026-05-10 post-Task 8 review
+
+Task 8's validation revealed that the script's *intended* workflow was misunderstood. The default `oem boot-efi` flow is correct for testing — stage payload, run it, observe outcome. The payload-flow guard added in Task 6 gave wrong-direction advice (`ESCAPE_WITH_PAYLOAD=1`) when the real issue is that `oem boot-efi`'s fastboot reply isn't clean and the script can't distinguish three post-boot-efi outcomes:
+
+- **A — payload runs successfully**: device boots into recovery → adb up → pull logs.
+- **B — payload crashes, lands in our flashed FastbootLib**: device reboots; our pre-flashed `mode-1-auto-debug-verbose.efi` auto-boots into FastbootLib. Script issues `oem escape` → patched ABL → recovery → pull crash logs.
+- **C — payload crashes, device powers off**: no fastboot AND no adb for >60s. Script declares user-assistance required.
+
+Tasks 9, 10, 11 below address this scope correction.
+
+---
+
+## Task 9: Fix `oem boot-efi` cleanliness in edk2/
+
+**Files:**
+- Modify: `edk2/QcomModulePkg/Library/FastbootLib/FastbootCmds.c`
+- Modify: `GblChainloadPkg/Library/LogFsLib/PostGblLog.c` (or wherever logfs writes happen) — only if needed for deferred-rc logging
+
+Currently `oem boot-efi` starts the staged image via `gBS->StartImage()` but the fastboot reply isn't a clean OKAY/FAIL — the host either sees a USB drop or an incomplete reply. We make it reply `OKAY started` *before* StartImage, and log the eventual rc to logfs after StartImage returns (if it returns at all).
+
+- [ ] **Step 1: Find the existing `oem boot-efi` handler in FastbootCmds.c**
+
+```bash
+cd /home/vivy/gbl-chainload/edk2
+grep -nE "CmdOemBootEfi|oem boot-efi|StartImage" QcomModulePkg/Library/FastbootLib/FastbootCmds.c | head -20
+```
+
+Note the handler function name + line range.
+
+- [ ] **Step 2: Modify the handler**
+
+Before `gBS->StartImage(...)` call, add:
+```c
+/* Reply OKAY before handoff so host's fastboot terminates cleanly.
+   StartImage's eventual rc (if it returns) is logged to logfs below
+   for after-the-fact triage. */
+FastbootOkay ("started");
+WaitForTransferComplete ();
+```
+
+(`WaitForTransferComplete` is already a STATIC in this file — see line ~3024 area. Mirror the pattern from CmdGetVarAll.)
+
+After the StartImage call (if reachable):
+```c
+{
+  CHAR8  Line[128];
+  AsciiSPrint (Line, sizeof (Line),
+               "oem boot-efi: StartImage returned %r at %u ticks\n",
+               StartStatus, (UINT32)GetPerformanceCounter ());
+  if (LogFsIsReady ()) {
+    LogFsWrite (Line, AsciiStrLen (Line));
+  }
+  /* No more FastbootOkay/Fail — host already saw OKAY. */
+}
+```
+
+Where `StartStatus` is the captured `EFI_STATUS` from StartImage.
+
+If the StartImage call previously had `FastbootOkay` / `FastbootFail` calls after it, those become DEAD CODE — remove them.
+
+- [ ] **Step 3: Build (mode-1 with the chainloader EFI is what we'll test against)**
+
+```bash
+./scripts/build.sh --mode 1 --auto --debug --verbose 2>&1 | tail -10
+```
+
+Expected: clean build.
+
+- [ ] **Step 4: Commit (edk2 + parent bump)**
+
+```bash
+cd /home/vivy/gbl-chainload/edk2 \
+  && git add QcomModulePkg/Library/FastbootLib/FastbootCmds.c \
+  && git commit -m "FastbootCmds: oem boot-efi replies OKAY before StartImage, logs rc to logfs"
+cd /home/vivy/gbl-chainload \
+  && git add edk2 \
+  && git commit -m "edk2: bump submodule (oem boot-efi cleanliness)"
+```
+
+Do NOT push.
+
+---
+
+## Task 10: Post-boot-efi state machine in test-device-automatic.sh
+
+**Files:**
+- Modify: `scripts/test-device-automatic.sh`
+- Possibly modify: `scripts/device-monitor.sh` (helper for detecting "our FastbootLib")
+
+The script today, post-`oem boot-efi`, just waits for adb. It doesn't distinguish outcome A vs B vs C. Add a state machine after `oem boot-efi` that:
+
+1. Polls adb-up and fastboot-up in parallel for up to 60s.
+2. If **adb-up** first: outcome A → continue with existing log pull (Step 4).
+3. If **fastboot-up** first: probe `fastboot getvar version-bootloader` (or `oem efi-status`) to distinguish our FastbootLib from stock.
+   - Ours → outcome B: issue `fastboot oem escape`, then wait for adb, then pull logs.
+   - Stock → outcome B' (already-known-bad): error message names "device fell to stock fastboot — Phoenix watchdog or hard crash. Power off + rerun."
+4. If **neither for 60s**: outcome C → "device powered off — power on into bootloader and rerun."
+
+- [ ] **Step 1: Revert/repurpose Task 6's payload-flow guard**
+
+The case-match that warned about chainloader payloads (in `test-device-automatic.sh` around lines 72–91 of the post-Task-6 state) gave wrong-direction advice. Delete the warning block. The case-match itself is still useful — keep it as a comment that documents which payload basenames are "chainloader" and which are "Linux-bootable", but stop printing the wrong recommendation.
+
+Replacement: just leave a 3-line comment explaining payload conventions, no runtime check. Example:
+
+```bash
+# Payload conventions (informational, not enforced):
+#   - mode-0*.efi:                 Linux-bootable, default oem boot-efi flow works.
+#   - mode-1*.efi / *auto-debug*:  Chainloader; oem boot-efi runs it, then it
+#                                  attempts to escape via ABL. If escape fails,
+#                                  device reboots into the flashed FastbootLib.
+#                                  Task 10's state machine handles both outcomes.
+```
+
+- [ ] **Step 2: Add a helper to detect "our FastbootLib" vs "stock fastboot"**
+
+In `scripts/device-monitor.sh`, append:
+
+```bash
+# Does the current fastboot device look like OUR FastbootLib (i.e. the one
+# from gbl-chainload's flashed EFI), as opposed to stock?
+#
+# We use `fastboot oem efi-status` as a signature: OUR FastbootLib registers
+# that command; stock doesn't. If the command returns FAIL with "command not
+# found" (or similar), we're on stock. If it returns OKAY with status text,
+# we're on ours.
+device_monitor_is_our_fastbootlib () {
+  local out
+  out="$(timeout 3 fastboot oem efi-status 2>&1 || true)"
+  echo "$out" | grep -qi "OKAY\|efi-status\|gbl-chainload" && return 0
+  return 1
+}
+```
+
+(Verify the actual response of `oem efi-status` by running it once against our FastbootLib while building this helper. Adjust the grep pattern to match whatever our FastbootLib actually returns. If `oem efi-status` doesn't exist in our FastbootLib, pick another command unique to us — e.g. `oem escape` returning a recognisable string.)
+
+- [ ] **Step 3: Add the post-boot-efi state machine to test-device-automatic.sh**
+
+Find the section right after `device_monitor_fastboot oem boot-efi ...` in the default flow (Step 2 of the script). Replace what currently happens (existing `wait_for_adb_or_fastboot_fallback`) with:
+
+```bash
+# After oem boot-efi, the staged payload runs. Three possible outcomes:
+#   A — payload boots into recovery (success) → wait for adb
+#   B — payload crashes, device reboots into our flashed FastbootLib → oem escape → wait for adb
+#   C — payload crashes, device powers off → user assistance needed
+echo "    waiting up to 60s for outcome A (adb up) or B (our FastbootLib) or C (power off)..."
+
+WAIT_LIMIT=60
+WAIT_ELAPSED=0
+STATE=""
+while [[ $WAIT_ELAPSED -lt $WAIT_LIMIT ]]; do
+  if device_monitor_in_adb_quick; then
+    STATE="A"
+    break
+  fi
+  if device_monitor_in_fastboot_quick; then
+    if device_monitor_is_our_fastbootlib; then
+      STATE="B"
+    else
+      STATE="B-stock"
+    fi
+    break
+  fi
+  sleep 3
+  WAIT_ELAPSED=$((WAIT_ELAPSED + 3))
+done
+
+case "$STATE" in
+  A)
+    echo "    outcome A: payload booted to adb. Continuing to log pull."
+    ;;
+  B)
+    echo "    outcome B: payload crashed, device booted our flashed FastbootLib."
+    echo "    issuing oem escape to enter recovery and pull crash logs..."
+    device_monitor_fastboot oem escape 2>&1 | head -3 || true
+    echo "    waiting for adb (recovery) after escape..."
+    if ! device_monitor_wait_for_adb_state 120 >/dev/null; then
+      echo "error: outcome B but adb did not come up after oem escape." >&2
+      exit 1
+    fi
+    ;;
+  B-stock)
+    echo "error: outcome B': device fell to stock fastboot (Phoenix watchdog or hard crash)." >&2
+    echo "       power off the device, power on into bootloader, rerun script." >&2
+    exit 1
+    ;;
+  "")
+    echo "error: outcome C: neither adb nor fastboot for 60s — device likely powered off." >&2
+    echo "       power on into bootloader (Power + VolUp + VolDn), then rerun script." >&2
+    exit 1
+    ;;
+esac
+```
+
+- [ ] **Step 4: Syntax check**
+
+```bash
+bash -n /home/vivy/gbl-chainload/scripts/test-device-automatic.sh && echo "syntax OK"
+bash -n /home/vivy/gbl-chainload/scripts/device-monitor.sh && echo "syntax OK"
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/vivy/gbl-chainload
+git add scripts/test-device-automatic.sh scripts/device-monitor.sh
+git commit -m "test-device-automatic: post-boot-efi state machine (A/B/C outcomes)
+  
+  Replaces wrong-direction payload-flow guard with a real state probe.
+  After oem boot-efi, distinguish:
+    A — adb up (payload booted recovery): pull logs.
+    B — fastboot up + our FastbootLib (payload crashed, reboot landed
+        in our flashed EFI): oem escape → recovery → pull crash logs.
+    B-stock — fastboot up + stock fastboot (Phoenix or hard crash): error.
+    C — neither for 60s (power-off): user assistance required."
+```
+
+---
+
+## Task 11: Re-validate 3 unattended back-to-back runs
+
+**Files:**
+- Modify: `docs/re/test-device-automatic-baseline-findings.md` (append re-validation outcome)
+
+Replace Task 8's validation with one that exercises the corrected workflow.
+
+- [ ] **Step 1: Confirm device starts in bootloader fastboot**
+
+```bash
+fastboot devices
+```
+
+- [ ] **Step 2: Run 3 back-to-back, default invocation**
+
+```bash
+cd /home/vivy/gbl-chainload
+for i in 1 2 3; do
+  echo "=== Run $i starting at $(date +%T) ==="
+  ./scripts/test-device-automatic.sh 2>&1 | tee /tmp/test-device-rerun-$i.log
+  echo "=== Run $i exited with PIPESTATUS[0]=${PIPESTATUS[0]} ==="
+  fastboot reboot bootloader 2>/dev/null || true
+  sleep 5
+done
+```
+
+- [ ] **Step 3: Per-run classification**
+
+For each run, classify:
+- **PASS-A**: payload booted recovery, full log set captured.
+- **PASS-B**: payload crashed, our FastbootLib caught it, oem escape recovered, crash logs captured.
+- **PASS-actionable-B-stock**: cleanly reported "device fell to stock fastboot", exit non-zero.
+- **PASS-actionable-C**: cleanly reported "device powered off", exit non-zero.
+- **FAIL-hung**: hung > 3 minutes anywhere; Ctrl-C'd it.
+- **FAIL-silent**: silent failure or wrong outcome classification.
+
+- [ ] **Step 4: Append outcome to findings doc**
+
+```markdown
+## Re-validation outcome (Track 0 Task 11) — 2026-05-10
+
+After Tasks 9 (oem boot-efi cleanliness) and 10 (post-boot-efi state machine):
+
+- Run 1: PASS-A / PASS-B / PASS-actionable-B-stock / PASS-actionable-C / FAIL-...
+- Run 2: ...
+- Run 3: ...
+
+oem boot-efi OKAY reply visible in host fastboot output: yes/no
+Logfs deferred-rc line visible: yes/no
+State machine classified correctly: yes/no
+
+Track 0 acceptance (revised): PASS / FAIL
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /home/vivy/gbl-chainload
+git add docs/re/test-device-automatic-baseline-findings.md
+git commit -m "Track 0 Task 11 re-validation: 3 back-to-back runs with state machine"
+```
+
+Do NOT push.
+
