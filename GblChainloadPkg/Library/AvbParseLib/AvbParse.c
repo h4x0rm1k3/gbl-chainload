@@ -103,6 +103,9 @@ AvbParse_HashDescriptor (IN CONST UINT8 *Descriptor, IN UINT64 DescriptorLen,
   SaltLen   = AvbReadU32Be (Descriptor + 60);
   DigestLen = AvbReadU32Be (Descriptor + 64);
   BodyStart = 132;
+  if ((UINT64)NameLen + SaltLen + DigestLen + BodyStart > DescriptorLen) {
+    return EFI_INVALID_PARAMETER;
+  }
   *PartitionNameOut    = Descriptor + BodyStart;
   *PartitionNameLenOut = NameLen;
   *DigestOut           = Descriptor + BodyStart + NameLen + SaltLen;

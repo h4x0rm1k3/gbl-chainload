@@ -195,7 +195,7 @@ static UINT64 align8 (UINT64 v) { return (v + 7) & ~(UINT64)7; }
 
 static UINT64 build_hash_descriptor (UINT8 *out, CONST char *name, CONST UINT8 *digest, UINT32 digest_len) {
   UINT32 name_len = (UINT32)strlen (name);
-  UINT64 body_size = 16 + 32 + 4 + 4 + 4 + 4 + 60 + name_len + 0 + digest_len;
+  UINT64 body_size = 16 + 8 + 32 + 4 + 4 + 4 + 4 + 60 + name_len + 0 + digest_len;
   body_size = align8 (body_size);
   UINT64 num_bytes_following = body_size - 16;
   put_desc_header (out, 2, num_bytes_following);
