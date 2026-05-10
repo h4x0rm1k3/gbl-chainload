@@ -27,4 +27,9 @@ if grep -nE 'FAKELOCKED|MODE_DEBUG|AUTO_DEBUG_MODE' "$PHL/VerifiedBootHook.c" \
   echo "FAIL: legacy mode strings still present in slot wrappers"; exit 1
 fi
 
+# BootFlow.c gates ProtocolHook_InstallAll behind GBL_MODE>=1.
+grep -q '#if (GBL_MODE >= 1)' \
+  GblChainloadPkg/Application/GblChainload/BootFlow.c \
+  || { echo "FAIL: BootFlow.c must gate ProtocolHook_InstallAll behind GBL_MODE>=1"; exit 1; }
+
 echo "ok 046_mode1_protocol_hook_lint"

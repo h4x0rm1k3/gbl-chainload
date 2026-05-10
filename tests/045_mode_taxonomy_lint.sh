@@ -8,10 +8,10 @@ cd "$(dirname "$0")/.."
 
 PKG="GblChainloadPkg/Library/DynamicPatchLib"
 
-# 1. PatchTable.c exists and gates mode_1 inclusion behind GBL_MODE==1.
+# 1. PatchTable.c exists and gates mode_1 inclusion behind GBL_MODE>=1.
 test -f "$PKG/PatchTable.c" || { echo "FAIL: missing PatchTable.c"; exit 1; }
-grep -q '#if (GBL_MODE == 1)' "$PKG/PatchTable.c" \
-  || { echo "FAIL: PatchTable.c must gate mode_1 patches behind GBL_MODE==1"; exit 1; }
+grep -q '#if (GBL_MODE >= 1)' "$PKG/PatchTable.c" \
+  || { echo "FAIL: PatchTable.c must gate mode_1 patches behind GBL_MODE>=1"; exit 1; }
 
 # 2. Universal patches use SCOPE_UNIVERSAL.
 grep -q 'SCOPE_UNIVERSAL' "$PKG/universal/universal.c" \

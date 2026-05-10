@@ -59,8 +59,10 @@ BootFlowChainLoad (VOID)
   VOID                *Pe = NULL;
   UINT32               PeSize = 0;
   PATCH_RESULT         PatchRes = {0};
-  HOOK_INSTALL_RESULT  HookRes = {0};
   EFI_HANDLE           ImageHandle = NULL;
+#if (GBL_MODE >= 1)
+  HOOK_INSTALL_RESULT  HookRes = {0};
+#endif
 
   DEBUG ((DEBUG_INFO, "BootFlow: start (mode=%d)\n", (int)GBL_MODE));
   SCR_PRINT (L"BootFlow: start (mode=%d)\n", (int)GBL_MODE);
@@ -106,7 +108,9 @@ BootFlowChainLoad (VOID)
     return EFI_NOT_READY;
   }
 
-  /* 3. Install protocol hooks (universal baseline + mode-N overlay). */
+  /* 3. Install protocol hooks (universal baseline + mode-N overlay).
+        Mode-0 skips this entirely — no fakelock, no SCM/OplusSec drops. */
+#if (GBL_MODE >= 1)
   Status = ProtocolHook_InstallAll (&HookRes);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "BootFlow: hook install failed (%r) - aborting\n",
@@ -115,6 +119,10 @@ BootFlowChainLoad (VOID)
     FreePool (Pe);
     return Status;
   }
+#else
+  DEBUG ((DEBUG_INFO, "BootFlow: mode-0 — skipping ProtocolHook_InstallAll\n"));
+  SCR_PRINT (L"BootFlow: mode-0 -- skipping ProtocolHook_InstallAll\n");
+#endif
 
   /* 4. LoadImage + StartImage. */
   Status = gBS->LoadImage (FALSE, gImageHandle, NULL, Pe, PeSize, &ImageHandle);

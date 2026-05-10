@@ -14,7 +14,7 @@ extern CONST UINTN      kUniversalPatchesCount;
 extern CONST PATCH_DESC kOemOneplusPatches[];
 extern CONST UINTN      kOemOneplusPatchesCount;
 
-#if (GBL_MODE == 1)
+#if (GBL_MODE >= 1)
 extern CONST PATCH_DESC kMode1Patches[];
 extern CONST UINTN      kMode1PatchesCount;
 #endif
@@ -41,7 +41,7 @@ InitAggregate (VOID)
   for (i = 0; i < kOemOneplusPatchesCount && n < MAX_PATCHES; ++i) {
     gAggregated[n++] = kOemOneplusPatches[i];
   }
-#if (GBL_MODE == 1)
+#if (GBL_MODE >= 1)
   for (i = 0; i < kMode1PatchesCount && n < MAX_PATCHES; ++i) {
     gAggregated[n++] = kMode1Patches[i];
   }

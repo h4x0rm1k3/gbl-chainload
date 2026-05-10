@@ -20,6 +20,27 @@
 
 #include <Library/ProtocolHookLib.h>
 
+#if (GBL_MODE == 0)
+
+EFI_STATUS
+EFIAPI
+ProtocolHook_InstallAll (
+  OUT HOOK_INSTALL_RESULT  *Result
+  )
+{
+  /* Mode-0 -- no protocol hooks installed.  BootFlow.c never calls this
+     in mode-0, but the symbol must still link.  Return EFI_SUCCESS as a
+     defensive default. */
+  if (Result != NULL) {
+    ZeroMem (Result, sizeof (*Result));
+    Result->UniversalRequiredOk = TRUE;
+    Result->ModeOverlayOk       = TRUE;
+  }
+  return EFI_SUCCESS;
+}
+
+#elif (GBL_MODE == 1 || GBL_MODE == 2 || GBL_MODE == 3)
+
 /* Existing slot installers (defined in their respective .c files). */
 EFI_STATUS InstallVerifiedBootHook (VOID);
 EFI_STATUS InstallScmHook          (VOID);
@@ -93,13 +114,7 @@ ProtocolHook_InstallAll (
     return EFI_NOT_READY;
   }
 
-#if (GBL_MODE == 1)
-  Result->ModeOverlayOk = TRUE;   /* Mode-1 overlay is inline in slot wrapper. */
-#elif (GBL_MODE == 2 || GBL_MODE == 3)
-  Result->ModeOverlayOk = TRUE;   /* Plans 2/3 will populate. */
-#else
-# error "GBL_MODE must be 1, 2, or 3"
-#endif
+  Result->ModeOverlayOk = TRUE;   /* Mode-1 overlay inline; 2/3 land in later plans. */
 
   Print (
     L"ProtocolHookLib: installed (mode=%d,"
@@ -112,3 +127,7 @@ ProtocolHook_InstallAll (
     );
   return EFI_SUCCESS;
 }
+
+#else
+# error "GBL_MODE must be 0, 1, 2, or 3"
+#endif

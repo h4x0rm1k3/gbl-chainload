@@ -23,7 +23,7 @@ EFI_STATUS FastbootInitialize (VOID);
 EFI_STATUS EFIAPI BootFlowChainLoad (VOID);
 
 #ifndef GBL_MODE
-# error "GBL_MODE (1, 2, or 3) must be defined at build time"
+# error "GBL_MODE (0, 1, 2, or 3) must be defined at build time"
 #endif
 #ifndef GBL_AUTO
 # define GBL_AUTO 0
