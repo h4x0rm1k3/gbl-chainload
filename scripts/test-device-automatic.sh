@@ -74,22 +74,13 @@ if [[ "$ESCAPE_RECOVERY" == "1" && "$ESCAPE_WITH_PAYLOAD" == "1" ]]; then
   exit 1
 fi
 
-# Payload-flow mismatch guard. The default oem boot-efi flow expects a
-# Linux-bootable payload; chainloader EFIs (mode-1, mode-fakelocked,
-# mode-N-auto-*) need ESCAPE_WITH_PAYLOAD=1 to be loaded via the
-# "stage then oem escape" path. Catch the mismatch before staging
-# (since the symptom downstream is "device went to stock fastboot
-# 10s after StartImage", which is hard to diagnose).
-if [[ "$ESCAPE_WITH_PAYLOAD" != "1" && "$ESCAPE_RECOVERY" != "1" ]]; then
-  case "$(basename "$PAYLOAD")" in
-    mode-1*|mode-fakelocked*|*auto-debug*|*auto-debug-verbose*)
-      echo "warn: payload $(basename "$PAYLOAD") looks like a chainloader EFI." >&2
-      echo "      the default 'oem boot-efi' flow expects a Linux-bootable payload." >&2
-      echo "      consider rerunning with GBL_TEST_ESCAPE_WITH_PAYLOAD=1, or set" >&2
-      echo "      PAYLOAD to a Linux-bootable .efi (e.g. dist/mode-0.efi if present)." >&2
-      ;;
-  esac
-fi
+# Payload conventions (informational, not enforced):
+#   - mode-0*.efi:                 Linux-bootable; oem boot-efi alone works.
+#   - mode-1*.efi / *auto-debug*:  Chainloader; oem boot-efi runs it, then
+#                                  it attempts to escape via ABL. If escape
+#                                  fails, device reboots into our flashed
+#                                  FastbootLib. Task 10's state machine
+#                                  handles both outcomes.
 
 if [[ "$ESCAPE_RECOVERY" != "1" && ! -f "$PAYLOAD" ]]; then
   echo "error: payload not found: $PAYLOAD" >&2
@@ -285,14 +276,71 @@ else
     echo "error: oem boot-efi failed for non-handoff reason. See above." >&2
     exit 1
   fi
+
+  # After oem boot-efi, the staged payload runs. Three possible outcomes:
+  #   A — payload boots into recovery (success) → wait for adb
+  #   B — payload crashes, device reboots into our flashed FastbootLib → oem escape → wait for adb
+  #   C — payload crashes, device powers off → user assistance needed
+  echo "    waiting up to 60s for outcome A (adb up) or B (our FastbootLib) or C (power off)..."
+
+  WAIT_LIMIT=60
+  WAIT_ELAPSED=0
+  STATE=""
+  while [[ $WAIT_ELAPSED -lt $WAIT_LIMIT ]]; do
+    if device_monitor_in_adb_quick; then
+      STATE="A"
+      break
+    fi
+    if device_monitor_in_fastboot_quick; then
+      if device_monitor_is_our_fastbootlib; then
+        STATE="B"
+      else
+        STATE="B-stock"
+      fi
+      break
+    fi
+    sleep 3
+    WAIT_ELAPSED=$((WAIT_ELAPSED + 3))
+  done
+
+  case "$STATE" in
+    A)
+      echo "    outcome A: payload booted to adb. Continuing to log pull."
+      ;;
+    B)
+      echo "    outcome B: payload crashed, device booted our flashed FastbootLib."
+      echo "    issuing oem escape to enter recovery and pull crash logs..."
+      device_monitor_fastboot oem escape 2>&1 | head -3 || true
+      echo "    waiting for adb (recovery) after escape..."
+      if ! device_monitor_wait_for_adb_state 120 >/dev/null; then
+        echo "error: outcome B but adb did not come up after oem escape." >&2
+        exit 1
+      fi
+      ;;
+    B-stock)
+      echo "error: outcome B': device fell to stock fastboot (Phoenix watchdog or hard crash)." >&2
+      echo "       power off the device, power on into bootloader, rerun script." >&2
+      exit 1
+      ;;
+    "")
+      echo "error: outcome C: neither adb nor fastboot for 60s — device likely powered off." >&2
+      echo "       power on into bootloader (Power + VolUp + VolDn), then rerun script." >&2
+      exit 1
+      ;;
+  esac
+  _BOOT_EFI_STATE_MACHINE_RAN=1
 fi
 
 # Post-step-2 state probe: if the device is still in fastboot 2s after the
 # escape/stage path completed, the chainload likely did not hand off correctly.
-sleep 2
-if device_monitor_in_fastboot_quick; then
-  echo "warn: still in fastboot 2s after oem escape — chainload may have failed." >&2
-  echo "      will continue with extended adb wait, but this is suspicious." >&2
+# (Only applies to escape-recovery / escape-with-payload branches; default path
+# uses the state machine above and already knows its outcome.)
+if [[ "${_BOOT_EFI_STATE_MACHINE_RAN:-0}" != "1" ]]; then
+  sleep 2
+  if device_monitor_in_fastboot_quick; then
+    echo "warn: still in fastboot 2s after oem escape — chainload may have failed." >&2
+    echo "      will continue with extended adb wait, but this is suspicious." >&2
+  fi
 fi
 
 # Phoenix stopwatch — start after step 2 succeeds (all three branches above
@@ -302,53 +350,59 @@ device_monitor_phoenix_start
 echo "    Phoenix stopwatch started — must reach bootloader within ${_PHOENIX_KILL}s"
 
 # Step 3 — wait for adb --------------------------------------------------
-# mode-debug's BootFlowChainLoad → patched ABL. For --escape-recovery, the
-# `fastboot reboot recovery` reason is preserved until `oem escape` starts ABL.
-# Either way, adb comes up. Cap the wait so a hang doesn't block forever.
+# mode-debug's BootFlowChainLoad → patched ABL. For --escape-recovery and
+# --escape-with-payload, the `oem escape` path leads to adb/recovery.
+# For the default oem boot-efi path, the state machine above already handled
+# the wait and issued oem escape if needed; skip the shared wait in that case.
 echo
 echo ">>> [3/5] waiting for adb (Linux or recovery)..."
-# `adb wait-for-device` defaults to STATE=device on some platform-tools
-# combinations and can miss/break on recovery. Poll `adb devices` instead
-# and accept explicit states: device / recovery / rescue / sideload.
-#
-# 360s budget: chain-load + ABL handoff + AVB walk + kernel boot + adb
-# authorization. Recovery boot can take 4-5 minutes on this device. If a
-# regression reboots/powers back into sibling FastbootLib instead, detect and
-# log that state immediately instead of waiting for manual interpretation.
 if ! device_monitor_phoenix_check; then
   echo "error: Phoenix watchdog deadline reached — bailing to avoid stock-fastboot wedge" >&2
   echo "       power off the device, power on into bootloader, rerun script." >&2
   exit 1
 fi
-set +e
-WAIT_RESULT="$(wait_for_adb_or_fastboot_fallback 360)"
-WAIT_RC=$?
-set -e
-case "$WAIT_RC" in
-  0)
-    ADB_STATE="${WAIT_RESULT#adb:}"
-    echo "    adb up: state=$ADB_STATE"
-    ;;
-  2)
-    capture_fastboot_fallback "adb-timeout-hit-fastboot-after-chainload"
-    echo "error: expected adb/recovery, but device is back in fastboot." >&2
-    echo "       This usually means the payload failed to boot Linux/recovery and" >&2
-    echo "       reset/powered back into sibling FastbootLib." >&2
-    exit 2
-    ;;
-  *)
-    echo "error: device did not come up on adb within 360s." >&2
-    echo "       last device state:" >&2
-    fastboot devices 2>&1 | sed 's/^/         /' >&2
-    adb devices 2>&1 | sed 's/^/         /' >&2
-    echo "       likely causes:" >&2
-    echo "         1) chainload reached recovery but adb not enabled (pull /tmp/recovery-log via emergency dump)" >&2
-    echo "         2) Phoenix watchdog fired — device dropped to stock fastboot" >&2
-    echo "         3) recovery vbmeta mismatch — device booted then panicked" >&2
-    echo "       recovery: power off, power on into bootloader, rerun" >&2
-    exit 1
-    ;;
-esac
+if [[ "${_BOOT_EFI_STATE_MACHINE_RAN:-0}" != "1" ]]; then
+  # Escape-recovery / escape-with-payload branches: poll for adb normally.
+  # `adb wait-for-device` defaults to STATE=device on some platform-tools
+  # combinations and can miss/break on recovery. Poll `adb devices` instead
+  # and accept explicit states: device / recovery / rescue / sideload.
+  #
+  # 360s budget: chain-load + ABL handoff + AVB walk + kernel boot + adb
+  # authorization. Recovery boot can take 4-5 minutes on this device. If a
+  # regression reboots/powers back into sibling FastbootLib instead, detect and
+  # log that state immediately instead of waiting for manual interpretation.
+  set +e
+  WAIT_RESULT="$(wait_for_adb_or_fastboot_fallback 360)"
+  WAIT_RC=$?
+  set -e
+  case "$WAIT_RC" in
+    0)
+      ADB_STATE="${WAIT_RESULT#adb:}"
+      echo "    adb up: state=$ADB_STATE"
+      ;;
+    2)
+      capture_fastboot_fallback "adb-timeout-hit-fastboot-after-chainload"
+      echo "error: expected adb/recovery, but device is back in fastboot." >&2
+      echo "       This usually means the payload failed to boot Linux/recovery and" >&2
+      echo "       reset/powered back into sibling FastbootLib." >&2
+      exit 2
+      ;;
+    *)
+      echo "error: device did not come up on adb within 360s." >&2
+      echo "       last device state:" >&2
+      fastboot devices 2>&1 | sed 's/^/         /' >&2
+      adb devices 2>&1 | sed 's/^/         /' >&2
+      echo "       likely causes:" >&2
+      echo "         1) chainload reached recovery but adb not enabled (pull /tmp/recovery-log via emergency dump)" >&2
+      echo "         2) Phoenix watchdog fired — device dropped to stock fastboot" >&2
+      echo "         3) recovery vbmeta mismatch — device booted then panicked" >&2
+      echo "       recovery: power off, power on into bootloader, rerun" >&2
+      exit 1
+      ;;
+  esac
+else
+  echo "    adb state already confirmed by state machine."
+fi
 sleep 2
 
 # Capture which mode we ended up in

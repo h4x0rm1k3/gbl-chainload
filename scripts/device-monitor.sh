@@ -201,3 +201,22 @@ device_monitor_dropped_to_stock () {
   fi
   return 0  # mismatch = dropped to stock
 }
+
+# Does the current fastboot device look like OUR FastbootLib (the one from
+# gbl-chainload's flashed/staged EFI), as opposed to stock fastboot?
+#
+# Signature: `fastboot oem efi-status` is registered by our FastbootLib only.
+# Stock ABL fastboot replies FAILED/unknown command. Our FastbootLib replies
+# OKAY with status text (or at minimum does NOT say "unknown command").
+#
+# Probed live against the device on 2026-05-10:
+#   stock fastboot:  FAILED (remote: 'unknown command')
+#   our FastbootLib: expected OKAY <status-text> (confirmed via Task 11)
+#
+# Adjust the grep pattern below if the actual response varies.
+device_monitor_is_our_fastbootlib () {
+  local out
+  out="$(timeout 3 fastboot oem efi-status 2>&1 || true)"
+  echo "$out" | grep -qi "OKAY\|efi-status\|gbl-chainload" && return 0
+  return 1
+}
