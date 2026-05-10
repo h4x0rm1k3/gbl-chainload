@@ -208,22 +208,52 @@ skip both sites for that binary.
 
 ## Approach decision
 
-(Placeholder — to be filled in by Task 4.)
+**Selected: Approach A — Site V (cset rewrite) + Site G (cbz → nop).**
 
-Summary of data for Task 4:
+### Rationale
 
-| Metric | Value |
-|---|---|
-| Fixtures with libavb path | 4 of 5 |
-| Fixtures where Site V anchor is unique | 4 of 4 (100%) |
-| Fixtures where Site G anchor is unique | 4 of 4 (100%) |
-| Fixtures where BOTH sites unique | 4 of 4 |
-| Myron status | PATCH\_MISS (no libavb path detected) |
-| Site V anchor stability | 12/32 bytes stable; 15-byte anchor (tail+insn) is fully stable |
-| Site G anchor stability | 28/32 bytes stable; 22-byte anchor is fully stable |
-| Site V register | w24 (stable across all 4 fixtures — cset always writes w24) |
-| Site G register | w29 (ref/EU), w27 (IN/fairlady) — varies, nop replacement is register-agnostic |
+Approach A's anchor stability is excellent:
 
-Approach A (byte-pattern anchor) is viable for 4/5 fixtures with uniqueness=1.
-The stop-line requires ≥3 uniquely matched fixtures; this data satisfies that
-condition for both sites.
+- Site V anchor (15 bytes, exact): unique match on all 4 fixtures with libavb.
+- Site G anchor (22 bytes, exact): unique match on all 4 fixtures with libavb.
+- Both replacements are register-stable (mov w24, #1) or register-agnostic (nop).
+- Stop-line satisfied: 4-of-5 PATCH_OK ≥ 3-of-5 minimum (myron lacks libavb path; expected MISS).
+
+Approach B (libavb-internal return-value remap) was deemed unnecessary:
+
+- Approach A already produces a clean two-rewrite patch with maximally durable anchors.
+- Approach B's premise (single-rewrite at libavb's return path) would have been preferred only if Approach A's anchors lacked cross-binary stability. They don't.
+- Adding Approach B would add complexity (intercepting libavb's return-value setup at a single point in a function with multiple return paths) without measurable benefit.
+
+### Implementation specifics for Approach A
+
+**Site V (cset rewrite):**
+- Anchor (15 bytes, exact match): `030071e00307ade00308adf8079f1a`
+- Match offset → cset instruction: anchor_start + 11 bytes
+- Replacement instruction: `38008052` (little-endian for `mov w24, #1` = `0x52800038`)
+
+**Site G (cbz → nop):**
+- Anchor (22 bytes, exact match): `ff97e1c30291e4630291e00315aae20316aae303172a`
+- Match offset → cbz instruction: anchor_start + 30 bytes
+- Replacement instruction: `1f2003d5` (little-endian for `nop` = `0xD503201F`)
+
+### Per-fixture expected outcomes
+
+| Fixture | Site V offset | Site G offset | patch9 v2 outcome |
+|---|---|---|---|
+| infiniti (reference) | 0x25388 | 0x25A64 | PATCH_OK |
+| infiniti-EU-16.0.5.703 | 0x253DC | 0x25AB8 | PATCH_OK |
+| infiniti-IN-16.0.7.201 | 0x238C4 | 0x23FF4 | PATCH_OK |
+| fairlady-CN-16.0.7.200 | 0x23654 | 0x23D84 | PATCH_OK |
+| myron | not present | not present | PATCH_MISS (expected — myron has no libavb call path; not a defect) |
+
+### Approach B (not selected) — reference for future iterations
+
+If, in a future ABL build, Approach A's anchors lose unique-match stability and shorter masked anchors don't suffice, Approach B becomes the alternative:
+
+- Locate `avb_slot_verify_full` (or `avb_slot_verify`) by string-anchoring on libavb error strings (`OK_NOT_SIGNED`, `Hash of data does not match descriptor`, etc.).
+- Find the return-value-setup site for the recoverable-error case (the `mov w0, #4` for OK_NOT_SIGNED, where 4 is the AvbSlotVerifyResult enum value).
+- Rewrite to `mov w0, #0` (OK).
+- Single-site rewrite. ABL sees Result=OK always when SlotData is populated, takes the OK fast path naturally — no Site G rewrite needed.
+
+This is documented as a fallback architecture, not selected for plan 2.
