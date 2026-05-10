@@ -382,6 +382,11 @@ adb shell 'getprop | grep -E "^\[ro\.boot\.|^\[ro\.bootmode|^\[ro\.bootloader"' 
 # Mount + pull logfs (UefiLogN.txt + GblChainload_BootN.txt). Best-effort:
 # logfs may already be mounted somewhere, or the device may not have
 # vfat tools available in recovery. If mount fails, try via raw block.
+#
+# Recovery context: '/' is writable, no su needed, by-name symlinks work
+# directly. If this script ever needs to run from system context, port
+# the /data/local/tmp/logfs + 'su -c <compound>' pattern from
+# scripts/test-device-manual.sh.
 adb shell 'mkdir -p /logfs && mount -t vfat /dev/block/by-name/logfs /logfs' \
   2>/dev/null \
   || echo "    logfs mount may have failed (already mounted? no vfat?) — pulling anyway"
