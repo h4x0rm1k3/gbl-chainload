@@ -74,6 +74,23 @@ if [[ "$ESCAPE_RECOVERY" == "1" && "$ESCAPE_WITH_PAYLOAD" == "1" ]]; then
   exit 1
 fi
 
+# Payload-flow mismatch guard. The default oem boot-efi flow expects a
+# Linux-bootable payload; chainloader EFIs (mode-1, mode-fakelocked,
+# mode-N-auto-*) need ESCAPE_WITH_PAYLOAD=1 to be loaded via the
+# "stage then oem escape" path. Catch the mismatch before staging
+# (since the symptom downstream is "device went to stock fastboot
+# 10s after StartImage", which is hard to diagnose).
+if [[ "$ESCAPE_WITH_PAYLOAD" != "1" && "$ESCAPE_RECOVERY" != "1" ]]; then
+  case "$(basename "$PAYLOAD")" in
+    mode-1*|mode-fakelocked*|*auto-debug*|*auto-debug-verbose*)
+      echo "warn: payload $(basename "$PAYLOAD") looks like a chainloader EFI." >&2
+      echo "      the default 'oem boot-efi' flow expects a Linux-bootable payload." >&2
+      echo "      consider rerunning with GBL_TEST_ESCAPE_WITH_PAYLOAD=1, or set" >&2
+      echo "      PAYLOAD to a Linux-bootable .efi (e.g. dist/mode-0.efi if present)." >&2
+      ;;
+  esac
+fi
+
 if [[ "$ESCAPE_RECOVERY" != "1" && ! -f "$PAYLOAD" ]]; then
   echo "error: payload not found: $PAYLOAD" >&2
   exit 1
@@ -181,14 +198,16 @@ if [[ "$ESCAPE_RECOVERY" == "1" ]]; then
   echo "    waiting ${ESCAPE_DELAY}s for AUTO_DEBUG key window to settle..."
   sleep "$ESCAPE_DELAY"
   ESCAPE_LOG="$LOG_DIR/fastboot-oem-escape.txt"
-  device_monitor_fastboot oem escape 2>&1 \
-    | tee "$ESCAPE_LOG" \
-    | grep -v "Status read failed" \
-    || true
-  if grep -q "Status read failed" "$ESCAPE_LOG"; then
+  ESCAPE_OUT="$(device_monitor_fastboot oem escape 2>&1)"
+  ESCAPE_RC=$?
+  echo "$ESCAPE_OUT" | tee "$ESCAPE_LOG" | grep -v "Status read failed"
+  if echo "$ESCAPE_OUT" | grep -q "Status read failed"; then
     echo "    (USB drop on escape handoff — expected)"
-  elif grep -q FAILED "$ESCAPE_LOG"; then
-    echo "error: oem escape failed. See above." >&2
+  elif [[ $ESCAPE_RC -ne 0 ]] && ! echo "$ESCAPE_OUT" | grep -qi "OKAY\|finished"; then
+    echo "error: oem escape did not succeed (rc=$ESCAPE_RC)." >&2
+    echo "       device may still be in fastboot or may have wedged. Recovery:" >&2
+    echo "       1) check fastboot devices manually" >&2
+    echo "       2) if missing, power off + boot into bootloader, rerun" >&2
     exit 1
   fi
 elif [[ "$ESCAPE_WITH_PAYLOAD" == "1" ]]; then
@@ -235,14 +254,16 @@ elif [[ "$ESCAPE_WITH_PAYLOAD" == "1" ]]; then
 
   echo "    fastboot oem escape (BootFlowChainLoad → patched ABL → recovery)"
   ESCAPE_LOG="$LOG_DIR/fastboot-oem-escape.txt"
-  device_monitor_fastboot oem escape 2>&1 \
-    | tee "$ESCAPE_LOG" \
-    | grep -v "Status read failed" \
-    || true
-  if grep -q "Status read failed" "$ESCAPE_LOG"; then
+  ESCAPE_OUT="$(device_monitor_fastboot oem escape 2>&1)"
+  ESCAPE_RC=$?
+  echo "$ESCAPE_OUT" | tee "$ESCAPE_LOG" | grep -v "Status read failed"
+  if echo "$ESCAPE_OUT" | grep -q "Status read failed"; then
     echo "    (USB drop on escape handoff — expected)"
-  elif grep -q FAILED "$ESCAPE_LOG"; then
-    echo "error: oem escape failed. See above." >&2
+  elif [[ $ESCAPE_RC -ne 0 ]] && ! echo "$ESCAPE_OUT" | grep -qi "OKAY\|finished"; then
+    echo "error: oem escape did not succeed (rc=$ESCAPE_RC)." >&2
+    echo "       device may still be in fastboot or may have wedged. Recovery:" >&2
+    echo "       1) check fastboot devices manually" >&2
+    echo "       2) if missing, power off + boot into bootloader, rerun" >&2
     exit 1
   fi
 else
@@ -264,6 +285,14 @@ else
     echo "error: oem boot-efi failed for non-handoff reason. See above." >&2
     exit 1
   fi
+fi
+
+# Post-step-2 state probe: if the device is still in fastboot 2s after the
+# escape/stage path completed, the chainload likely did not hand off correctly.
+sleep 2
+if device_monitor_in_fastboot_quick; then
+  echo "warn: still in fastboot 2s after oem escape — chainload may have failed." >&2
+  echo "      will continue with extended adb wait, but this is suspicious." >&2
 fi
 
 # Phoenix stopwatch — start after step 2 succeeds (all three branches above
@@ -308,9 +337,15 @@ case "$WAIT_RC" in
     exit 2
     ;;
   *)
-    echo "error: adb did not come up within 360s. Device may have hung," >&2
-    echo "       powered off, or — under WSL — usbipd lost the" >&2
-    echo "       passthrough across the fastboot→recovery re-enumeration." >&2
+    echo "error: device did not come up on adb within 360s." >&2
+    echo "       last device state:" >&2
+    fastboot devices 2>&1 | sed 's/^/         /' >&2
+    adb devices 2>&1 | sed 's/^/         /' >&2
+    echo "       likely causes:" >&2
+    echo "         1) chainload reached recovery but adb not enabled (pull /tmp/recovery-log via emergency dump)" >&2
+    echo "         2) Phoenix watchdog fired — device dropped to stock fastboot" >&2
+    echo "         3) recovery vbmeta mismatch — device booted then panicked" >&2
+    echo "       recovery: power off, power on into bootloader, rerun" >&2
     exit 1
     ;;
 esac
