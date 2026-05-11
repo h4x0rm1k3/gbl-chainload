@@ -10,6 +10,7 @@ Working artifacts: `dist/mode-0.efi` (pass-through observation build) and `dist/
 
 ## Modes
 
+- **mode-0** — pass-through observation build. Patch engine + logfs only; no protocol hooks, no patch9. Useful for capturing logs against unmodified ABL verification behavior.
 - **mode-1** — protocol-hook fakelock. ABL sees locked DeviceInfo and builds KM SET_ROT/SET_BOOT_STATE off that view.
 - **mode-2** *(not yet implemented)* — TA-payload spoof at QSEE/SPSS boundaries; ABL stays honest; per-OTA typed-struct profile.
 - **mode-3** *(not yet implemented)* — universal baseline only; minimal experiment to gauge KM root-cert leaf survival.
@@ -17,8 +18,9 @@ Working artifacts: `dist/mode-0.efi` (pass-through observation build) and `dist/
 ## Build
 
 ```bash
-./scripts/build.sh --mode 1               # production silent
-./scripts/build.sh --mode 1 --auto --debug --verbose   # dev capture
+./scripts/build.sh --mode 0               # observation build (no hooks, no patch9)
+./scripts/build.sh --mode 1               # fakelock production silent
+./scripts/build.sh --mode 1 --auto --debug --verbose   # fakelock dev capture
 ```
 
 ## Repo conventions
