@@ -13,6 +13,8 @@ in `.claude/settings.json` `autoMode.hard_deny`.
   `system`, `vendor`, `product`, `system_ext`, `odm`, `userdata`, `cache`,
   `metadata` (with optional `_a` / `_b` slot suffix).
 - `fastboot oem unlock` / `fastboot oem lock`
+- `fastboot flashing unlock` / `fastboot flashing lock`
+- `fastboot flashing unlock_critical` / `fastboot flashing lock_critical`
 - `fastboot --set-active <slot>`
 - `fastboot erase <non-HLOS partition>`
 

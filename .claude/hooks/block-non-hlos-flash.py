@@ -124,6 +124,16 @@ def main() -> None:
                     "affect verified boot, TZ fuses, and user-data wipe. Run "
                     "it yourself."
                 )
+        elif sub == "flashing":
+            # Modern equivalents of `oem unlock/lock`. Same blast radius.
+            # `get_unlock_ability` is read-only — leave it alone.
+            sub2 = positional[1] if len(positional) > 1 else ""
+            if sub2 in ("unlock", "lock", "unlock_critical", "lock_critical"):
+                deny(
+                    f"fastboot flashing {sub2} is BLOCKED — lock-state "
+                    "transitions affect verified boot, TZ fuses, and "
+                    "user-data wipe. Run it yourself."
+                )
 
 
 if __name__ == "__main__":
