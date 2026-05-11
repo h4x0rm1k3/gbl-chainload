@@ -92,7 +92,7 @@ if ! device_monitor_in_fastboot_quick; then
 fi
 DEVICE_BUILD_NAME="$(device_monitor_build_name)"
 if [[ -z "$DEVICE_BUILD_NAME" ]]; then
-  echo "error: device responded but is NOT our FastbootLib (getvar build-name" >&2
+  echo "error: device responded but is NOT our FastbootLib (getvar build-name)" >&2
   echo "       returned nothing recognizable). Recovery options:" >&2
   echo "         1) \`fastboot reboot bootloader\` — our flashed chainloader EFI" >&2
   echo "            should auto-boot into FastbootLib." >&2
