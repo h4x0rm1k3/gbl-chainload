@@ -65,6 +65,9 @@ if ! "$DOCKER" image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
   "$DOCKER" build -t "$IMAGE_TAG" -f docker/Dockerfile .
 fi
 
+echo "==> Cleaning up previous build caches"
+rm -rf Build/
+
 mkdir -p dist Build
 
 echo "==> Building $ARTIFACT (mode=$MODE auto=$AUTO debug=$DEBUG verbose=$VERBOSE)"
