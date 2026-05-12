@@ -79,3 +79,41 @@ RewriteCbz (
   WriteInstrU32 (Buf, InsnOff, Insn);
   return TRUE;
 }
+
+BOOLEAN
+EncodeBUncond (
+  IN  UINT32  InsnOff,
+  IN  UINT32  TargetOff,
+  OUT UINT32 *Insn
+  )
+{
+  INT32 Delta = (INT32)(TargetOff - InsnOff);
+
+  if ((Delta & 3) != 0) {
+    return FALSE;
+  }
+  Delta >>= 2;
+  /* 26-bit signed range: [-2^25, 2^25 - 1]. */
+  if (Delta < -(1 << 25) || Delta >= (1 << 25)) {
+    return FALSE;
+  }
+
+  /* B unconditional: [31:26]=0b000101, imm26=[25:0]. */
+  *Insn = 0x14000000U | ((UINT32)Delta & 0x03FFFFFFu);
+  return TRUE;
+}
+
+BOOLEAN
+RewriteBUncond (
+  IN OUT UINT8  *Buf,
+  IN     UINT32  InsnOff,
+  IN     UINT32  TargetOff
+  )
+{
+  UINT32 Insn;
+  if (!EncodeBUncond (InsnOff, TargetOff, &Insn)) {
+    return FALSE;
+  }
+  WriteInstrU32 (Buf, InsnOff, Insn);
+  return TRUE;
+}

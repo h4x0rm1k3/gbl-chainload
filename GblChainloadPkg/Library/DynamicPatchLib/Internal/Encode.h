@@ -43,4 +43,26 @@ RewriteCbz (
   IN     UINT32  TargetOff
   );
 
+/** Encode an unconditional B with the given byte target.
+    @param InsnOff    Offset of the B instruction in the buffer.
+    @param TargetOff  Offset of the branch target.
+    @param Insn       Out: encoded 32-bit instruction word.
+    @return TRUE on success, FALSE if displacement out of 26-bit signed range
+            or not 4-byte aligned. **/
+BOOLEAN
+EncodeBUncond (
+  IN  UINT32  InsnOff,
+  IN  UINT32  TargetOff,
+  OUT UINT32 *Insn
+  );
+
+/** Rewrite the word at InsnOff as an unconditional B with the given target.
+    @return TRUE on successful rewrite, FALSE if displacement out of range. **/
+BOOLEAN
+RewriteBUncond (
+  IN OUT UINT8  *Buf,
+  IN     UINT32  InsnOff,
+  IN     UINT32  TargetOff
+  );
+
 #endif /* DPL_ENCODE_H_ */

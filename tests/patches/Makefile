@@ -12,7 +12,7 @@ INCLUDES := -I$(PROJ)/GblChainloadPkg/Include/Library \
 TEST_FIXTURES_DIR ?= $(PROJ)/tests/images
 CFLAGS  += -DTEST_FIXTURES_DIR='"$(TEST_FIXTURES_DIR)"'
 
-TESTS := test_patch1 test_patch7 test_patch9
+TESTS := test_patch1 test_patch7 test_patch9 test_patch6
 
 all: $(TESTS)
 	@for t in $(TESTS); do echo "== $$t =="; ./$$t || exit 1; done
@@ -34,6 +34,15 @@ test_patch9: test_patch9.c \
              $(DPL)/Internal/ScanLib.c \
              $(DPL)/Internal/PeSections.c \
              $(DPL)/Internal/Encode.c \
+             $(DPL)/Internal/Arm64Decode.c \
+             $(DPL)/mode_1/mode_1.c
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@
+
+test_patch6: test_patch6.c \
+             $(DPL)/Internal/ScanLib.c \
+             $(DPL)/Internal/PeSections.c \
+             $(DPL)/Internal/Encode.c \
+             $(DPL)/Internal/Arm64Decode.c \
              $(DPL)/mode_1/mode_1.c
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@
 
