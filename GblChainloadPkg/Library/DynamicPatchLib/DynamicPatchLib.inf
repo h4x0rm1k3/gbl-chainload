@@ -16,6 +16,7 @@
   Internal/ScanLib.c
   Internal/PeSections.c
   Internal/Encode.c
+  Internal/Arm64Decode.c
   Internal/PatchEngine.c
   PatchTable.c
   universal/universal.c
