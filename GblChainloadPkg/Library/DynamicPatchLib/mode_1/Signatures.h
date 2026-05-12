@@ -78,4 +78,15 @@ STATIC CONST UINT8 kPatch9SiteCAnchorMask[] = {
 #define kPatch9SiteCRewriteDelta  32U          /* anchor_off + 32 = cbz site */
 #define kPatch9SiteCReplacement   0xD503201FU  /* nop (register-agnostic) */
 
+/* ---- patch6: lock-state fastboot-gate strings ----------------------------
+   Each gate's error path loads one of these strings via an ADRP+ADD pair.
+   patch6 finds each string in .rodata, locates the ADRP+ADD in .text
+   targeting it, and rewrites the preceding gate.  See
+   `docs/re/abl-lock-state-fastboot-gate.md` for the byte-level treatment. */
+
+STATIC CONST CHAR8 kPatch6FlashingStr[]       = "Flashing is not allowed in Lock State";
+STATIC CONST CHAR8 kPatch6EraseStr[]          = "Erase is not allowed in Lock State";
+STATIC CONST CHAR8 kPatch6SlotChangeStr[]     = "Slot Change is not allowed in Lock State\n";
+STATIC CONST CHAR8 kPatch6SnapshotCancelStr[] = "Snapshot Cancel is not allowed in Lock State";
+
 #endif
