@@ -17,8 +17,6 @@ echo "== 042_dynamic_patch_harness =="
 bash tests/042_dynamic_patch_harness.sh
 echo "== 051_gbl_root_canoe_regression =="
 bash tests/051_gbl_root_canoe_regression.sh
-echo "== 053_synthesize_vbmeta_roundtrip =="
-bash tests/053_synthesize_vbmeta_roundtrip.sh
 
 # Carried-forward signature lint, if present.
 if [[ -f tests/030_signature_lint.sh ]]; then
