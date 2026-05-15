@@ -68,6 +68,38 @@ When adding a new emit in a hook or patch:
 - `GblChainloadPkg/Library/ProtocolHookLib/UniversalBaseline.c` — narrow policies every mode ships.
 - `GblChainloadPkg/Library/ProtocolHookLib/Mode1Overlay.c` — mode-1-specific hooks atop baseline.
 
+## FastbootLib surface
+
+The bundled edk2 FastbootLib is trimmed for RAM-loaded gbl-chainload testing and scripts.
+
+Useful getvars:
+
+- `gbl-chainload_*`
+- `oem-unlock-allowed`
+- `vbmeta:capabilities`
+- `vbmeta:slot`
+- `vbmeta:warning`
+- `vbmeta:<partition>:status`
+- `vbmeta:<partition>:descriptor-type`
+
+Useful commands:
+
+- `fastboot stage <file>` — stage a image.
+- `fastboot oem escape` — leave gbl-chainload FastbootLib and continue into patched ABL.
+- `fastboot oem boot-efi` — boot the currently staged EFI image with `LoadImage()` / `StartImage()`.
+- `fastboot oem oem-unlock-toggle` — enable the FRP OEM-unlock-allowed bit; second use is a no-op.
+- `fastboot flashing lock` / `fastboot flashing unlock` — update DevInfo lock state while skipping forced recovery wipe.
+
+Fastboot screen additions:
+
+- `DATE - ...` build timestamp line.
+- `OEM UNLOCK ALLOWED - yes/no` state line.
+- `AVB WARNING - ...` warning line when lightweight vbmeta probing detects a risky state.
+- `Enable OEM unlock` menu action.
+- `Escape` menu action.
+
+There is also a Boot ESP menu option, that would be useful for directly booting Operating Systems from USB. (Untested)
+
 ## Mode-0 reserve preservation test plan
 
 Use only RAM-load testing for gbl-chainload itself:
