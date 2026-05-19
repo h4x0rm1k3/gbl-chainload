@@ -2,7 +2,7 @@
 # scripts/build-recovery-zip.sh — assemble a single-mode installer ZIP
 # from the zip-gbl-chainload submodule.
 #
-#   build-recovery-zip.sh --mode diag|install|graft|profile
+#   build-recovery-zip.sh --mode diag|graft|mode-0-install|mode-1-install|mode-2-install
 #
 # Hard-fails if the submodule's vendored binaries have drifted from
 # zip/bin/MANIFEST (run zip/update-tools.sh to refresh).
@@ -13,8 +13,8 @@ ROOT=$(pwd)
 MODE=""
 [ "${1:-}" = --mode ] && MODE="${2:-}"
 case "$MODE" in
-  diag|install|graft|profile) ;;
-  *) echo "usage: $0 --mode diag|install|graft|profile" >&2; exit 2 ;;
+  diag|graft|mode-0-install|mode-1-install|mode-2-install) ;;
+  *) echo "usage: $0 --mode diag|graft|mode-0-install|mode-1-install|mode-2-install" >&2; exit 2 ;;
 esac
 
 SUB=zip
@@ -52,19 +52,47 @@ fi
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cp -r "$SUB"/. "$STAGE"/
-rm -rf "$STAGE/.*" \
-       "$STAGE/update-tools.sh" "$STAGE/README.md"
+rm -rf "$STAGE/update-tools.sh" "$STAGE/README.md"
+# strip VCS/agent dotfiles at every level (.git, .github, .gitignore,
+# .omc, ...) - the cp above pulls in the submodule's nested state.
+find "$STAGE" -mindepth 1 -name '.*' -prune -exec rm -rf {} +
 
 echo "$MODE" > "$STAGE/modes/SELECTED"
-for f in "$STAGE"/modes/*.conf "$STAGE"/modes/*.sh; do
-  b=$(basename "$f"); m=${b%.*}
-  [ "$m" = "$MODE" ] || rm -f "$f"
-done
 
-# read the selected mode's declared artifact needs
-MODE_TOOLS=""; MODE_EFI=""
+# read the selected mode's declared artifact needs (MODE_TOOLS / MODE_EFI for
+# the bin/ + base/ prune below; MODE_LIB for the modes/ prune just after).
+MODE_TOOLS=""; MODE_EFI=""; MODE_LIB=""
 # shellcheck disable=SC1090
 . "$SUB/modes/$MODE.conf"
+
+# Prune the non-selected modes. A real mode is a <name>.sh + <name>.conf pair.
+# A .sh with no sibling .conf is a shared mode lib (e.g. install-common.sh,
+# which the three mode-N-install modes source): keep it only when the selected
+# mode's .conf declares it as MODE_LIB, so diag/graft ZIPs do not gain dead
+# libs. This is declarative (parallel to MODE_TOOLS/MODE_EFI) rather than
+# grepping the mode's script source for a source-path string.
+# Mode stems are enumerated up front (a real mode = a .conf file), before any
+# deletion, so removing mode X's .conf does not hide mode Y's pairing.
+MODE_STEMS=""
+for c in "$STAGE"/modes/*.conf; do
+  [ -f "$c" ] || continue
+  b=$(basename "$c"); MODE_STEMS="$MODE_STEMS ${b%.conf}"
+done
+for f in "$STAGE"/modes/*.conf "$STAGE"/modes/*.sh; do
+  [ -f "$f" ] || continue
+  b=$(basename "$f"); m=${b%.*}
+  [ "$m" = "$MODE" ] && continue
+  case "$f" in
+    *.sh) case " $MODE_STEMS " in
+            *" $m "*) ;;          # a paired mode script - removable
+            *)                    # no sibling .conf: a shared mode lib -
+                                  # keep only if the selected mode declares it
+              [ "$b" = "$MODE_LIB" ] && continue
+              ;;
+          esac ;;
+  esac
+  rm -f "$f"
+done
 
 # prune bin/: keep MANIFEST (shipped for on-device provenance) and
 # busybox-arm64 (core infrastructure, always bundled - not a per-mode
