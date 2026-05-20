@@ -346,11 +346,31 @@ KmDecodeKnownCmd (
     }
 
     case 0x00000218: {
-      /* FBE_SET_SEED. Sends FBE class-key derivation seed to TZ.
-       * MODE-1: DO NOT mutate. */
-      VERBOSE ("qsee-km | cmd=0x%08x(FBE_SET_SEED) | h=%u | sl=%u | "
-               "st=%r | DO-NOT-MUTATE\n",
-               CmdId, Handle, SendLen, Status);
+      /* FBE_SET_SEED. Sends the FBE class-key derivation seed to TZ; the
+       * seed feeds wrapping of credential-encrypted / metadata storage
+       * keys. MODE-1: DO NOT mutate.
+       *
+       * Promoted from VERBOSE to GBL_INFO: when the bootloader spoofs KM
+       * verified-boot state, previously-wrapped FBE keys can fail to
+       * unwrap (forcing a /data format). Whether 0x218 is implicated is
+       * an open question, so this decode must be visible in prod /
+       * --debug captures, not just --verbose.
+       *
+       * The seed is sensitive secret material (same class as UDS/FRS) —
+       * NEVER log raw seed bytes. We emit a CRC-32 of the full seed
+       * payload as a non-reversible cross-boot correlation witness: the
+       * value matches iff the bytes match, but cannot be inverted to
+       * recover any seed material (CRC-32 maps N*8 bits -> 32 bits,
+       * lossy). CRC-32 is sufficient for correlation here; cryptographic
+       * collision resistance is not a requirement. */
+      UINT32 SeedCrc = 0;
+      if (SendBuf != NULL && SendLen > 4) {
+        /* CalculateCrc32 takes VOID*; cast away const (the call is read-only). */
+        SeedCrc = CalculateCrc32 ((VOID *)(SendBuf + 4), (UINTN)(SendLen - 4));
+      }
+      GBL_INFO ("qsee-km | cmd=0x%08x(FBE_SET_SEED) | h=%u | sl=%u | "
+                "seedCrc=0x%08x | st=%r | DO-NOT-MUTATE\n",
+                CmdId, Handle, SendLen, SeedCrc, Status);
       break;
     }
 
