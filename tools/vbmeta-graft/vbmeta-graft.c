@@ -182,7 +182,8 @@ static void list_cb(GBL_AVB_DESCRIPTOR_TAG tag, const uint8_t *desc,
     kind = "hash";
     const uint8_t *digest;
     uint32_t digest_len;
-    AvbParse_HashDescriptor(desc, desc_len, &name, &name_len, &digest, &digest_len);
+    AvbParse_HashDescriptor(desc, desc_len, &name, &name_len, &digest, &digest_len,
+                            NULL, NULL, NULL);
   } else if (tag == GblAvbDescChainPartitionTag) {
     kind = "chain";
     const uint8_t *pk;
@@ -393,9 +394,6 @@ static int cmd_graft(const char *stock_path, const char *custom_path,
  *  68   flags (u32 BE)
  *  72   reserved[60]
  * 132   variable: name || salt || digest
- *
- * AvbParse_HashDescriptor only extracts name and digest; we read image_size
- * and salt manually from the raw descriptor bytes.
  */
 
 /* Derive slot suffix: env GBL_VBMETA_SLOT > tail-match _a/_b on path > "a" */
@@ -488,32 +486,17 @@ static void lh_cb(GBL_AVB_DESCRIPTOR_TAG tag, const uint8_t *desc,
 
   if (tag == GblAvbDescHashTag) {
     /* --- hash descriptor --- */
-    const uint8_t *name = NULL;
-    uint32_t name_len = 0;
-    const uint8_t *digest = NULL;
-    uint32_t digest_len = 0;
+    const uint8_t *name   = NULL;
+    uint32_t      name_len = 0;
+    const uint8_t *digest  = NULL;
+    uint32_t      digest_len = 0;
+    const uint8_t *salt    = NULL;
+    uint32_t      salt_len = 0;
+    uint64_t      image_size = 0;
     if (AvbParse_HashDescriptor(desc, desc_len, &name, &name_len,
-                                &digest, &digest_len) != EFI_SUCCESS)
+                                &digest, &digest_len,
+                                &salt, &salt_len, &image_size) != EFI_SUCCESS)
       return;
-
-    /* Read image_size and salt from raw descriptor bytes.
-     * AvbParse_HashDescriptor already validated DescriptorLen >= 132 and
-     * 132 + name_len + salt_len + digest_len <= desc_len, so offsets up to
-     * 132 + name_len + salt_len are safe after the additional check below. */
-    uint64_t image_size = AvbReadU64Be(desc + 16); /* image_size at offset 16 */
-    uint32_t salt_len   = AvbReadU32Be(desc + 60); /* salt_len at offset 60 */
-
-    /* Bounds-check: 132 + name_len + salt_len must be within desc_len.
-     * AvbParse_HashDescriptor checked name+salt+digest combined; a crafted
-     * descriptor could still place salt_len past desc_len if digest_len is
-     * underreported by a non-standard vbmeta. */
-    if ((uint64_t)132 + name_len + salt_len > desc_len) {
-      /* malformed descriptor — treat as digest missing */
-      printf("partition=%.*s type=hash declared=0 digest=missing graft=n/a verdict=mismatch\n",
-             (int)name_len, (const char *)name);
-      return;
-    }
-    const uint8_t *salt = desc + 132 + name_len;
 
     /* Build partition path */
     char path[4096];

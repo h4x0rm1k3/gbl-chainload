@@ -54,11 +54,18 @@ AvbParse_VbmetaHeader (IN CONST UINT8 *Vbmeta, IN UINT64 VbmetaSize, OUT GBL_AVB
   HeaderOut->RollbackIndexLocation        = AvbReadU32Be (Vbmeta + 124);
   for (int i = 0; i < 48; ++i) HeaderOut->ReleaseString[i] = (CHAR8)Vbmeta[128 + i];
 
-  /* Sanity: header + auth + aux <= VbmetaSize. */
-  UINT64 Total = (UINT64)GBL_AVB_VBMETA_HEADER_SIZE
-                + HeaderOut->AuthenticationDataBlockSize
-                + HeaderOut->AuxiliaryDataBlockSize;
-  if (Total > VbmetaSize) return EFI_INVALID_PARAMETER;
+  /* Overflow-safe sanity: header + auth + aux <= VbmetaSize.
+     A naive `Total = header + auth + aux; if (Total > VbmetaSize)` is unsound:
+     a crafted vbmeta with huge auth/aux can wrap `Total` to a small value and
+     pass the check. Validate each addend against the remaining budget via
+     subtraction so no operand can overflow UINT64. */
+  if (HeaderOut->AuthenticationDataBlockSize
+      > VbmetaSize - GBL_AVB_VBMETA_HEADER_SIZE)
+    return EFI_INVALID_PARAMETER;
+  if (HeaderOut->AuxiliaryDataBlockSize
+      > VbmetaSize - GBL_AVB_VBMETA_HEADER_SIZE
+                   - HeaderOut->AuthenticationDataBlockSize)
+    return EFI_INVALID_PARAMETER;
 
   return EFI_SUCCESS;
 }
@@ -91,15 +98,20 @@ AvbParse_NextDescriptor (IN CONST UINT8 *AuxBlock, IN UINT64 AuxSize,
 EFI_STATUS EFIAPI
 AvbParse_HashDescriptor (IN CONST UINT8 *Descriptor, IN UINT64 DescriptorLen,
                          OUT CONST UINT8 **PartitionNameOut, OUT UINT32 *PartitionNameLenOut,
-                         OUT CONST UINT8 **DigestOut, OUT UINT32 *DigestLenOut)
+                         OUT CONST UINT8 **DigestOut, OUT UINT32 *DigestLenOut,
+                         OUT CONST UINT8 **SaltOut OPTIONAL,
+                         OUT UINT32 *SaltLenOut OPTIONAL,
+                         OUT UINT64 *ImageSizeOut OPTIONAL)
 {
   UINT32 NameLen, SaltLen, DigestLen;
+  UINT64 ImageSize;
   UINT64 BodyStart;
   if (Descriptor == NULL || PartitionNameOut == NULL || PartitionNameLenOut == NULL
       || DigestOut == NULL || DigestLenOut == NULL) {
     return EFI_INVALID_PARAMETER;
   }
   if (DescriptorLen < 132)                return EFI_INVALID_PARAMETER;
+  ImageSize = AvbReadU64Be (Descriptor + 16);
   NameLen   = AvbReadU32Be (Descriptor + 56);
   SaltLen   = AvbReadU32Be (Descriptor + 60);
   DigestLen = AvbReadU32Be (Descriptor + 64);
@@ -111,6 +123,9 @@ AvbParse_HashDescriptor (IN CONST UINT8 *Descriptor, IN UINT64 DescriptorLen,
   *PartitionNameLenOut = NameLen;
   *DigestOut           = Descriptor + BodyStart + NameLen + SaltLen;
   *DigestLenOut        = DigestLen;
+  if (SaltOut != NULL)      *SaltOut      = Descriptor + BodyStart + NameLen;
+  if (SaltLenOut != NULL)   *SaltLenOut   = SaltLen;
+  if (ImageSizeOut != NULL) *ImageSizeOut = ImageSize;
   return EFI_SUCCESS;
 }
 
