@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.2.1 — 2026-05-20
+
+Highlights:
+
+- Diagnostic mode reworked: mode is now read from the GBLP1 overlay (a `MODE2_PROFILE` entry means mode-2) instead of a per-build base-EFI SHA-256 list, so the `unknown-base` label is gone and diag no longer needs a vendored-tool rebuild when an EFI changes.
+- diag: removed the `confidence` headline; the `EFISP` / `loader-ABL` / `avb chain` lines (plus the in-bundle raw checks) stand on their own.
+- diag: the action line is now a descriptive `avb chain` — `ok` for mode-2/clean, else `<parts> fail verified-boot — could require graft (mode-1 only)`. Stock chained sub-vbmeta (`vbmeta_system`, `vbmeta_vendor`) are excluded since they are never grafted.
+
+Fixes:
+
+- mode-2 installer `detect_oem` is recovery-safe: prefers `getprop`, falls back to `/prop.default`, `/default.prop`, then mounted `build.prop` (recovery has no mounted `system`/`vendor`).
+
 ## v2.2.0 — 2026-05-20
 
 Highlights:
