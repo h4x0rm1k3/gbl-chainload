@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.2.2 — 2026-06-21
+
+Highlights:
+
+- All ZIPs: Reworked UI, user prompts, and changed up device directory.
+- ZIP mode-1 installer: Auto graft recovery.
+- Add host tool instructions, and vbmeta graft python wrapper.
+
+Fixes:
+
+- Fastboot menu warns user correctly about ungrafted partitions now.
+
 ## v2.2.1 — 2026-05-20
 
 Highlights:
