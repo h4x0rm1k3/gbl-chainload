@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/host/086_diag_dryrun.sh — drive zip/modes/diag.sh against a
-# synthetic environment in each confidence tier.
+# synthetic environment in each EFISP state (valid / corrupt-GBLP1 / not-a-PE).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -120,9 +120,11 @@ run_one() {
   done
   [ "$missing" = 0 ] || { cat "$envdir/stdout.txt"; return 1; }
 
-  # Assert the expected confidence tier headline appears in report.txt.
-  if ! grep -q "confidence   : $expect" "$bundle/report.txt"; then
-    echo "FAIL [$scenario]: expected tier '$expect' not in report.txt"
+  # New diag shape (v2.2.1): no confidence tier, no base-EFI fingerprint; the
+  # action line is a descriptive `avb chain`. Assert the EFISP state line for
+  # this scenario plus the structural invariants.
+  if ! grep -q "EFISP        : $expect" "$bundle/report.txt"; then
+    echo "FAIL [$scenario]: expected EFISP line '$expect' not in report.txt"
     echo "--- report.txt ---"
     cat "$bundle/report.txt"
     echo "--- stdout.txt ---"
@@ -130,37 +132,39 @@ run_one() {
     return 1
   fi
 
-  # Verify the 2026-05-20 UI amendment: no `logfs history` line; the old
-  # two-line `graft needed`/`fakelock req` shape was replaced by a single
-  # mode-aware `action req` line (post-2026-05-20 v2 correction); legacy
-  # "NO" / "YES" labels are gone.
-  if grep -q '^[[:space:]]*logfs history' "$bundle/report.txt"; then
-    echo "FAIL [$scenario]: report.txt still contains a logfs history UI line"
-    grep '^[[:space:]]*logfs history' "$bundle/report.txt"
+  # The confidence headline and base-EFI fingerprint label are gone.
+  if grep -qE '^[[:space:]]*confidence[[:space:]]*:' "$bundle/report.txt"; then
+    echo "FAIL [$scenario]: report.txt still has a confidence line"
+    cat "$bundle/report.txt"; return 1
+  fi
+  if grep -q 'unknown-base' "$bundle/report.txt"; then
+    echo "FAIL [$scenario]: report.txt still emits unknown-base"
+    cat "$bundle/report.txt"; return 1
+  fi
+
+  # Legacy action/graft/logfs lines are gone; the descriptive `avb chain`
+  # line replaces the old `action req`.
+  if grep -qE '^[[:space:]]*(action req|graft needed|fakelock req|logfs history)[[:space:]]*:' "$bundle/report.txt"; then
+    echo "FAIL [$scenario]: report.txt still uses a legacy action/graft/logfs line"
+    grep -E 'action req|graft needed|fakelock req|logfs history' "$bundle/report.txt"
     return 1
   fi
-  if grep -qE '^[[:space:]]*(graft needed|fakelock req)[[:space:]]*:' "$bundle/report.txt"; then
-    echo "FAIL [$scenario]: report.txt still uses legacy graft needed/fakelock req lines"
-    grep -E 'graft needed|fakelock req' "$bundle/report.txt"
-    return 1
-  fi
-  if ! grep -qE '^[[:space:]]*action req[[:space:]]*:' "$bundle/report.txt"; then
-    echo "FAIL [$scenario]: report.txt missing the action req line"
+  if ! grep -qE '^[[:space:]]*avb chain[[:space:]]*:' "$bundle/report.txt"; then
+    echo "FAIL [$scenario]: report.txt missing the avb chain line"
     cat "$bundle/report.txt"
-    return 1
-  fi
-  if grep -qE 'action req[[:space:]]*:[[:space:]]*(YES|NO)\b' "$bundle/report.txt"; then
-    echo "FAIL [$scenario]: action req uses legacy YES/NO labels (expected 'none' or partition list)"
-    grep -E 'action req' "$bundle/report.txt"
     return 1
   fi
 
   echo "OK [$scenario] -> $expect"
 }
 
-run_one high   HIGH
-run_one medium MEDIUM
-run_one low    LOW
-run_one none   NONE
+# EFISP state line per synthetic scenario (no confidence tier any more):
+#   high / medium — base EFI + valid GBLP1 overlay  -> "GBLP1 v1 ok"
+#   low           — PE present but the GBLP1 is corrupt -> "PE present, GBLP1 ..."
+#   none          — EFISP doesn't start with MZ        -> "not a PE"
+run_one high   "GBLP1 v1 ok"
+run_one medium "GBLP1 v1 ok"
+run_one low    "PE present, GBLP1"
+run_one none   "not a PE"
 
 echo "PASS: 086 diag dryrun"
