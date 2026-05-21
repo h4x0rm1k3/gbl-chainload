@@ -26,7 +26,7 @@ vbmeta-graft-android: $(SRCS)
 
 clean:
 	rm -f vbmeta-graft vbmeta-graft-android vbmeta-graft.exe \
-	      vbmeta-graft-macos-x64 vbmeta-graft-macos-arm64
+	      vbmeta-graft-macos-x64 vbmeta-graft-macos-arm64 vbmeta-graft-linux
 
 # --- Windows / macOS cross-compile (zig cc) ---
 XCFLAGS = -O2 -Wall -Wextra -std=c11 -D__HOST_BUILD__ $(INCS)
@@ -34,6 +34,7 @@ XCFLAGS = -O2 -Wall -Wextra -std=c11 -D__HOST_BUILD__ $(INCS)
 windows:     vbmeta-graft.exe
 macos-x64:   vbmeta-graft-macos-x64
 macos-arm64: vbmeta-graft-macos-arm64
+linux:       vbmeta-graft-linux
 
 vbmeta-graft.exe: $(SRCS)
 	zig cc -target x86_64-windows-gnu $(XCFLAGS) $^ -o $@
@@ -43,3 +44,15 @@ vbmeta-graft-macos-x64: $(SRCS)
 
 vbmeta-graft-macos-arm64: $(SRCS)
 	zig cc -target aarch64-macos $(XCFLAGS) $^ -o $@
+
+vbmeta-graft-linux: $(SRCS)
+	zig cc -target x86_64-linux-musl $(XCFLAGS) -static $^ -o $@
+
+# Project version (single source of truth: top-level VERSION file).
+GBL_TOOL_VERSION := $(shell tr -d '[:space:]' < $(dir $(lastword $(MAKEFILE_LIST)))../../VERSION)
+ifeq ($(GBL_TOOL_VERSION),)
+$(error VERSION file is empty or missing)
+endif
+CFLAGS  += -DGBL_TOOL_VERSION='"$(GBL_TOOL_VERSION)"'
+XCFLAGS += -DGBL_TOOL_VERSION='"$(GBL_TOOL_VERSION)"'
+NDK_CFLAGS += -DGBL_TOOL_VERSION='"$(GBL_TOOL_VERSION)"'
